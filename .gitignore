@@ -1,0 +1,25 @@
+# Dépendances
+node_modules/
+**/node_modules/
+
+# Variables d'environnement (clés API, secrets)
+.env
+**/.env
+.env.local
+**/.env.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# Build / cache
+dist/
+build/
+.next/
+__pycache__/
+*.pyc
+
+# Éditeur / OS
+.vscode/
+.DS_Store
+Thumbs.db

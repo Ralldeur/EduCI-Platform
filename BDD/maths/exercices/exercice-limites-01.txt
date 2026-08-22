@@ -1,0 +1,10 @@
+﻿Exercice sur les limites - Terminale D
+
+Soit la fonction C(p) = 3p + 150 où p est le nombre de tonnes de café produites et C(p) le revenu en milliers de FCFA.
+
+Question 1 : Calculer la limite de C(p) quand p tend vers 0.
+Question 2 : Calculer la limite de C(p) quand p tend vers l'infini.
+
+Correction :
+1. lim(p->0) C(p) = 150
+2. lim(p->+infini) C(p) = +infini

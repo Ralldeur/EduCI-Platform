@@ -1,0 +1,215 @@
+## ============================================================================
+## EDUCI — Plateforme éducative IA (RAG + microservices)
+##
+## Squelette inspiré de la structure de yeredon-ai, réduit à l'essentiel
+## (pas de Kafka/MinIO/Grafana/Loki/Prometheus, pas de double Postgres) et en
+## Node.js/Next.js au lieu de Java Spring Boot / Angular.
+##
+## Démarrage :
+##   docker compose up -d
+## Au 1er lancement : build des services + pull du modèle Ollama +
+## création de la collection Qdrant + ingestion auto de BDD/ (contenu
+## curriculaire) une fois le ml-service réellement implémenté (Phase 3).
+## Pour l'instant (Phase 0) : tous les services backend sont des coquilles
+## vides qui exposent juste /health — aucune logique métier encore.
+##
+## ARCHITECTURE (flux de la requête, de haut en bas)
+##
+##   frontend :3000  ──►  gateway :8000       (Next.js → proxy Express :
+##        (EDGE)               │               JWT, routage)
+##        ┌────────────────────┼──────────── MICROSERVICES ────────────────┐
+##        │  auth :8081   chat :8082   ml :8086   (payroll :8085, plus tard)│
+##        └──────┬─────────────┬──────────────┬─────────────────────────────┘
+##               ▼             ▼              ▼
+##   ┌──────────────────────────── DATA & LLM ──────────────────────────────┐
+##   │  postgres :5432 (base unique partagée)   qdrant :6333                │
+##   │  ollama :11434 (ollama-init = pull auto du modèle)                    │
+##   │  keycloak :8080 (identité)      bootstrap = ingestion RAG (one-shot) │
+##   └────────────────────────────────────────────────────────────────────────┘
+## ============================================================================
+
+networks:
+  educi-net:
+    driver: bridge
+
+volumes:
+  pg_data:
+  qdrant_data:
+  ollama_data:
+
+services:
+
+  # ---------- DATA LAYER ----------
+  postgres:
+    image: postgres:16-alpine
+    container_name: educi-postgres
+    environment:
+      POSTGRES_USER: educi_admin
+      POSTGRES_PASSWORD: educi_admin_pwd
+      POSTGRES_DB: educi_db
+    ports: ["5432:5432"]
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    networks: [educi-net]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U educi_admin"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  qdrant:
+    image: qdrant/qdrant:v1.10.0
+    container_name: educi-qdrant
+    ports: ["6333:6333", "6334:6334"]
+    volumes: [qdrant_data:/qdrant/storage]
+    networks: [educi-net]
+
+  # ---------- LLM ENGINE ----------
+  ollama:
+    image: ollama/ollama:latest
+    container_name: educi-ollama
+    ports: ["11434:11434"]
+    volumes: [ollama_data:/root/.ollama]
+    networks: [educi-net]
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  # Télécharge le(s) modèle(s) requis au 1er démarrage puis s'arrête (idempotent).
+  ollama-init:
+    image: ollama/ollama:latest
+    container_name: educi-ollama-init
+    depends_on:
+      ollama: { condition: service_healthy }
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["/bin/sh", "-c", "ollama pull qwen2.5:1.5b && ollama pull nomic-embed-text"]
+    networks: [educi-net]
+    restart: "no"
+
+  # ---------- IDENTITY ----------
+  keycloak:
+    build: ./keycloak
+    container_name: educi-keycloak
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/educi_db
+      KC_DB_USERNAME: educi_admin
+      KC_DB_PASSWORD: educi_admin_pwd
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_BACKCHANNEL: "false"
+      KC_HOSTNAME_URL: "http://localhost:8080"
+      KC_HOSTNAME_ADMIN_URL: "http://localhost:8080"
+      KC_HTTP_ENABLED: "true"
+    ports: ["8080:8080"]
+    volumes:
+      - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+    depends_on:
+      postgres: { condition: service_healthy }
+    networks: [educi-net]
+
+    # ---------- BACKEND MICROSERVICES (coquilles vides, Phase 0) ----------
+  gateway:
+    build: ./gateway
+    container_name: educi-gateway
+    ports: ["8000:8000"]
+    environment:
+      KEYCLOAK_ISSUER: http://localhost:8080/realms/educi
+      KEYCLOAK_JWKS: http://keycloak:8080/realms/educi/protocol/openid-connect/certs
+      AUTH_SERVICE_URL: http://auth-service:8081
+      CHAT_SERVICE_URL: http://host.docker.internal:8082
+      ML_SERVICE_URL: http://ml-service:8086
+    depends_on:
+      keycloak: { condition: service_started }
+    restart: unless-stopped
+    networks: [educi-net]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  
+  auth-service:
+    build: ./auth-service
+    container_name: educi-auth-service
+    ports: ["8081:8081"]
+    environment:
+      DATABASE_URL: postgresql://educi_admin:educi_admin_pwd@postgres:5432/educi_db
+      KEYCLOAK_ISSUER: http://localhost:8080/realms/educi
+      KEYCLOAK_JWKS: http://keycloak:8080/realms/educi/protocol/openid-connect/certs
+    depends_on:
+      postgres: { condition: service_healthy }
+      keycloak: { condition: service_started }
+    restart: unless-stopped
+    networks: [educi-net]
+
+  chat-service:
+    build: ./chat-service
+    container_name: educi-chat-service
+    ports: ["8082:8082"]
+    environment:
+      DATABASE_URL: postgresql://educi_admin:educi_admin_pwd@postgres:5432/educi_db
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      OLLAMA_URL: http://ollama:11434
+      ML_SERVICE_URL: http://ml-service:8086
+      KEYCLOAK_ISSUER: http://localhost:8080/realms/educi
+      KEYCLOAK_JWKS: http://keycloak:8080/realms/educi/protocol/openid-connect/certs
+    depends_on:
+      postgres: { condition: service_healthy }
+      ollama-init: { condition: service_completed_successfully }
+    restart: unless-stopped
+    networks: [educi-net]
+
+  ml-service:
+    build: ./ml-service
+    container_name: educi-ml-service
+    ports: ["8086:8086"]
+    environment:
+      QDRANT_URL: http://qdrant:6333
+      OLLAMA_URL: http://ollama:11434
+    depends_on:
+      qdrant: { condition: service_started }
+      ollama-init: { condition: service_completed_successfully }
+    restart: unless-stopped
+    networks: [educi-net]
+
+  # payroll-service: reporté (Phase 5). Port 8085 réservé, service non
+  # implémenté pour l'instant — on décommentera ce bloc le moment venu.
+  # payroll-service:
+  #   build: ./payroll-service
+  #   container_name: educi-payroll-service
+  #   ports: ["8085:8085"]
+  #   depends_on:
+  #     postgres: { condition: service_healthy }
+  #   networks: [educi-net]
+
+  # ---------- FRONTEND ----------
+  frontend:
+    build: ./frontend
+    container_name: educi-frontend
+    ports: ["3000:3000"]
+    environment:
+      NEXT_PUBLIC_GATEWAY_URL: http://localhost:8000
+    depends_on:
+      gateway: { condition: service_started }
+    restart: unless-stopped
+    networks: [educi-net]
+
+  # Crée la collection Qdrant + ingère BDD/ (contenu curriculaire) au démarrage.
+  # No-op tant que ml-service n'a pas d'endpoint d'ingestion réel (Phase 3).
+  bootstrap:
+    image: alpine:3.20
+    container_name: educi-bootstrap
+    depends_on:
+      gateway: { condition: service_started }
+      ml-service: { condition: service_started }
+      keycloak: { condition: service_started }
+      ollama-init: { condition: service_completed_successfully }
+    volumes:
+      - ./BDD:/BDD:ro
+      - ./scripts/bootstrap-ingest.sh:/bootstrap-ingest.sh:ro
+    entrypoint: ["/bin/sh", "/bootstrap-ingest.sh"]
+    networks: [educi-net]
+    restart: "no"

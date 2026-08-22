@@ -1,0 +1,9 @@
+﻿Les limites de fonctions en Terminale D
+
+Une limite décrit le comportement d'une fonction f(x) lorsque x se rapproche d'une valeur a, ou tend vers l'infini.
+
+Définition formelle : on dit que f(x) tend vers L quand x tend vers a si, pour tout epsilon > 0, il existe delta > 0 tel que si 0 < |x-a| < delta alors |f(x)-L| < epsilon.
+
+Exemple concret en Côte d'Ivoire : le prix du cacao P(q) = 500000/q + 2000 tend vers 2000 FCFA quand la production q devient très grande.
+
+Propriétés : la limite d'une somme est la somme des limites, la limite d'un produit est le produit des limites, si le dénominateur ne tend pas vers zéro.

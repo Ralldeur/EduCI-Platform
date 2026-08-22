@@ -1,0 +1,107 @@
+{
+  "realm": "educi",
+  "enabled": true,
+  "sslRequired": "none",
+  "accessTokenLifespan": 900,
+  "ssoSessionIdleTimeout": 28800,
+  "ssoSessionMaxLifespan": 28800,
+  "registrationAllowed": true,
+  "registrationEmailAsUsername": false,
+  "verifyEmail": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "roles": {
+    "realm": [
+      { "name": "ROLE_STUDENT" },
+      { "name": "ROLE_TEACHER" },
+      { "name": "ROLE_ADMIN" }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "educi-frontend",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "redirectUris": [
+        "http://localhost:3000/*",
+        "http://localhost/*",
+        "http://localhost:8080/*"
+      ],
+      "webOrigins": [
+        "http://localhost:3000",
+        "http://localhost",
+        "+"
+      ],
+      "protocol": "openid-connect",
+      "attributes": {
+        "post.logout.redirect.uris": "+"
+      },
+      "defaultClientScopes": ["web-origins", "profile", "roles", "email"],
+      "protocolMappers": [
+        {
+          "name": "grade_level",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "config": {
+            "user.attribute": "grade_level",
+            "claim.name": "grade_level",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true"
+          }
+        },
+        {
+          "name": "bac_series",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "config": {
+            "user.attribute": "bac_series",
+            "claim.name": "bac_series",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "educi-backend",
+      "enabled": true,
+      "bearerOnly": true,
+      "protocol": "openid-connect"
+    }
+  ],
+  "users": [
+    {
+      "username": "admin.demo",
+      "email": "admin@educi.local",
+      "enabled": true,
+      "firstName": "Admin",
+      "lastName": "Demo",
+      "credentials": [
+        { "type": "password", "value": "admin123", "temporary": false }
+      ],
+      "realmRoles": ["ROLE_ADMIN"]
+    },
+    {
+      "username": "eleve.demo",
+      "email": "eleve@educi.local",
+      "enabled": true,
+      "firstName": "Élève",
+      "lastName": "Demo",
+      "credentials": [
+        { "type": "password", "value": "eleve123", "temporary": false }
+      ],
+      "realmRoles": ["ROLE_STUDENT"],
+      "attributes": {
+        "grade_level": ["Terminale D"],
+        "bac_series": ["D"]
+      }
+    }
+  ]
+}
