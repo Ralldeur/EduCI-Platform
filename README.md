@@ -1,105 +1,228 @@
-# EduCI — squelette microservices (Phase 0 + Phase 1)
+# EduCI
 
-Structure inspirée de `yeredon-ai`, réduite à l'essentiel et en Node.js/Next.js
-au lieu de Java Spring Boot / Angular. Voir `plan-architecture-microservices.md`
-pour le plan complet phase par phase.
+EduCI est une plateforme educative ivoirienne qui combine une interface web,
+des microservices Node.js/Python et une IA capable de repondre a partir du
+contenu scolaire ingere dans une base vectorielle.
 
-## État actuel
+Le projet est organise autour de trois responsabilites :
 
-**Phase 0 (fondations)** : squelette Docker Compose, tous les services démarrent.
+- authentifier les utilisateurs avec Keycloak ;
+- centraliser les appels via un gateway protege par JWT ;
+- fournir des explications et des exercices contextualises par le RAG.
 
-**Phase 1 (Gateway + Keycloak + auth) — fait :**
-- `gateway/` — proxy Express, **validation JWT réelle** (`src/auth.js`, vérifie
-  la signature via le JWKS Keycloak), transmet l'identité aux services en aval
-  via headers internes (`x-user-id`, `x-user-email`, `x-user-roles`).
-- `auth-service/` — endpoints `POST /profile/sync` et `GET /profile/:userId`
-  pour le profil applicatif (niveau, série BAC), stocké dans `auth_user_profiles`
-  (table dans la base Postgres partagée).
-- `keycloak/Dockerfile` — image Keycloak avec le **provider bcrypt** ajouté,
-  pour importer les comptes existants sans reset password.
-- `frontend/scripts/migrate-users-to-keycloak.mjs` — migration one-shot des
-  comptes Prisma existants vers Keycloak (hash bcrypt préservé).
+## Architecture
 
-**Phase 3 (ml-service — priorisé avant la Phase 2 chat-service) — fait :**
-- `ml-service/rag/pipeline.py` — embeddings via Ollama (`nomic-embed-text`),
-  découpage en chunks, ingestion et recherche dans Qdrant (collection
-  `curriculum_educi`, créée automatiquement au démarrage).
-- `ml-service/rag/extract.py` — extraction de texte depuis PDF/DOCX/texte brut.
-- `POST /lessons/ingest` — ingère un cours ou un exercice (`docType`
-  obligatoire : `"cours"` ou `"exercice"`).
-- `POST /rag/search` — recherche RAG filtrable par matière, niveau, et
-  **`docType`** — c'est ce filtre qui garantit que les exercices ne
-  remontent jamais dans le contexte d'une explication de cours, et
-  inversement (règle produit non négociable, voir plan §Phase 3).
-- `scripts/bootstrap-ingest.sh` — ingère automatiquement `BDD/<matière>/cours/`
-  et `BDD/<matière>/exercices/` au démarrage, avec `docType` dérivé du dossier.
+```text
+Navigateur
+    |
+    v
+frontend :3000 (Next.js)
+    |
+    v
+gateway :8000 (Express, validation JWT, routage)
+    |-------------------|-------------------|
+    v                   v                   v
+auth-service :8081  chat-service :8082  ml-service :8086
+    |                   |                   |
+    +-------------------+-------------------+
+                        |
+              PostgreSQL :5432
 
-**Pas encore fait :**
-- `chat-service/` — Node/Express, vide (Phase 2 : extraction depuis le
-  monolithe Next.js, puis branchement sur `POST /rag/search` pour ancrer
-  les réponses sur les cours/exercices ingérés)
-- `payroll-service/` — pas encore créé, reporté (Phase 5)
-- `frontend/` — code applicatif Next.js pas encore déplacé ici
+Keycloak :8080  Qdrant :6333  Ollama :11434
+```
 
-## Démarrer
+### Services
+
+| Service | Role | Technologie |
+| --- | --- | --- |
+| `frontend` | Interface web, authentification et routes serveur | Next.js 15, React 19, TypeScript |
+| `gateway` | Point d'entree API, validation JWT et proxy | Node.js, Express |
+| `auth-service` | Profils applicatifs des utilisateurs | Node.js, Express, PostgreSQL |
+| `chat-service` | Conversations et reponses IA | Node.js, Express, Groq |
+| `ml-service` | Extraction, embeddings et recherche RAG | Python, FastAPI, Ollama, Qdrant |
+| `keycloak` | Gestion des identites et des roles | Keycloak |
+| `postgres` | Base relationnelle partagee | PostgreSQL 16 |
+| `qdrant` | Stockage vectoriel | Qdrant |
+| `ollama` | Generation et embeddings locaux | Ollama |
+| `bootstrap` | Ingestion initiale du contenu de `BDD/` | Alpine, shell |
+
+## Prerequis
+
+- Docker Desktop avec Docker Compose ;
+- Git ;
+- au moins 8 Go de memoire disponibles pour Docker, selon les modeles Ollama ;
+- une cle Groq pour les reponses du `chat-service`.
+
+## Demarrage avec Docker
+
+Depuis la racine du projet :
 
 ```bash
 cp .env.example .env
-docker compose up -d
 ```
 
-Vérifier que chaque service répond :
+Sous PowerShell, utilisez plutot :
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Renseignez ensuite `GROQ_API_KEY` dans `.env`, puis lancez la plateforme :
 
 ```bash
-curl http://localhost:8000/health   # gateway
-curl http://localhost:8081/health   # auth-service
-curl http://localhost:8082/health   # chat-service
-curl http://localhost:8086/health   # ml-service
+docker compose up -d --build
 ```
 
-Keycloak : http://localhost:8080 (admin/admin), realm `educi` déjà importé.
-Comptes de démo : `admin.demo / admin123`, `eleve.demo / eleve123`.
+Au premier demarrage, Docker telecharge les images et Ollama recupere les
+modeles `qwen2.5:1.5b` et `nomic-embed-text`. Le service `bootstrap` ingere
+ensuite les fichiers places dans `BDD/<matiere>/cours/` et
+`BDD/<matiere>/exercices/`.
 
-⚠️ Le service `frontend` ne démarrera pas tant que son dossier est vide —
-voir `frontend/README.md` pour la suite.
+URLs locales :
 
-## Tester la Phase 1
+- application : http://localhost:3000
+- gateway : http://localhost:8000
+- Keycloak : http://localhost:8080
+- Qdrant : http://localhost:6333/dashboard
 
-1. Récupérer un token depuis Keycloak (compte de démo) :
-   ```bash
-   curl -X POST http://localhost:8080/realms/educi/protocol/openid-connect/token \
-     -d client_id=educi-frontend -d grant_type=password \
-     -d username=eleve.demo -d password=eleve123
-   ```
-2. Appeler un service protégé via le gateway avec ce token :
-   ```bash
-   curl -X POST http://localhost:8000/api/auth/profile/sync \
-     -H "Authorization: Bearer <access_token>" \
-     -H "Content-Type: application/json" \
-     -d '{"gradeLevel": "Terminale D", "bacSeries": "D"}'
-   ```
-   Sans token (ou token invalide) → `401`. Avec un bon token → le profil est créé/mis à jour.
-3. Une fois le code Next.js déplacé dans `frontend/`, lancer la migration des
-   comptes existants (voir `frontend/README.md`).
+Arreter les conteneurs sans supprimer les donnees :
 
-## Tester la Phase 3 (RAG)
+```bash
+docker compose down
+```
 
-1. Déposer un fichier de test :
-   ```bash
-   mkdir -p BDD/maths/cours
-   echo "Une limite décrit le comportement d'une fonction..." > BDD/maths/cours/limites.md
-   docker compose up -d --build
-   ```
-   Le conteneur `bootstrap` ingère automatiquement ce fichier au démarrage.
-2. Vérifier la recherche RAG directement (sans passer par chat-service, qui n'existe pas encore) :
-   ```bash
-   curl -X POST http://localhost:8000/api/ml/rag/search \
-     -H "Authorization: Bearer <access_token>" \
-     -H "Content-Type: application/json" \
-     -d '{"query": "Comment calculer une limite ?", "subject": "maths", "docType": "cours", "topK": 3}'
-   ```
+Pour supprimer egalement les volumes PostgreSQL, Qdrant et Ollama :
 
-## Prochaine étape
+```bash
+docker compose down -v
+```
 
-Phase 2 : extraction de `/api/chat` et `/api/conversations` du monolithe
-Next.js vers `chat-service`.
+## Configuration
+
+Le fichier `.env` racine contient les variables utilisees par Compose :
+
+```dotenv
+GROQ_API_KEY=your_groq_api_key
+```
+
+Le frontend dispose de son propre exemple dans
+`frontend/.env.example`. En execution Docker, ses appels passent par le
+gateway. Les cles et secrets reels ne doivent jamais etre commites.
+
+Identifiants de developpement fournis par le realm Keycloak :
+
+- administration Keycloak : `admin / admin` ;
+- utilisateur eleve : `eleve.demo / eleve123` ;
+- utilisateur administrateur : `admin.demo / admin123`.
+
+Ces identifiants sont reserves au developpement local et doivent etre changes
+avant toute mise en production.
+
+## Contenu pedagogique et RAG
+
+Les documents sont classes par matiere et par type :
+
+```text
+BDD/
+└── maths/
+    ├── cours/
+    └── exercices/
+```
+
+Le type du document (`cours` ou `exercice`) est conserve lors de l'ingestion.
+La recherche RAG applique ce filtre pour eviter qu'un exercice soit utilise
+comme contexte d'une explication de cours, ou inversement.
+
+Ajouter un fichier dans `BDD/`, puis relancer l'ingestion :
+
+```bash
+docker compose up -d --force-recreate bootstrap
+```
+
+Le service expose notamment :
+
+- `POST /api/ml/lessons/ingest` via le gateway ;
+- `POST /api/ml/rag/search` via le gateway.
+
+Ces routes necessitent un token Keycloak valide.
+
+## Verification rapide
+
+```bash
+curl http://localhost:8000/health
+curl http://localhost:8081/health
+curl http://localhost:8082/health
+curl http://localhost:8086/health
+```
+
+Voir l'etat des conteneurs et les logs :
+
+```bash
+docker compose ps
+docker compose logs -f gateway
+docker compose logs -f chat-service
+```
+
+## Developpement local
+
+Chaque service Node.js possede ses dependances et ses scripts independants.
+Pour le frontend :
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Scripts frontend utiles :
+
+```bash
+npm run build
+npm run db:generate
+npm run db:push
+npm run db:studio
+```
+
+Pour le `chat-service` :
+
+```bash
+cd chat-service
+npm install
+npm run dev
+```
+
+Le developpement local complet necessite toujours les dependances Docker
+(PostgreSQL, Keycloak, Qdrant et Ollama). Consultez aussi
+`frontend/README.md` pour les details propres a l'interface web.
+
+## Structure du depot
+
+```text
+auth-service/       Profils utilisateurs
+chat-service/       Conversations et IA
+frontend/           Application Next.js
+gateway/            Proxy API et securite JWT
+keycloak/           Image et realm Keycloak
+ml-service/         Ingestion et recherche RAG
+BDD/                Contenu pedagogique
+scripts/            Scripts d'initialisation
+docker-compose.yml  Orchestration locale
+```
+
+## Etat du projet
+
+Les fondations microservices, l'authentification Keycloak, le gateway, le
+frontend, le chat et le pipeline RAG sont en place. Les evolutions restantes
+incluent notamment l'enrichissement des parcours pedagogiques, les paiements,
+les statistiques d'apprentissage et une future application mobile.
+
+## Securite
+
+- ne commitez jamais `.env` ni une cle API ;
+- utilisez uniquement des placeholders dans les fichiers `.env.example` ;
+- revoquez immediatement toute cle exposee ;
+- remplacez les mots de passe de developpement avant la production.
+
+## Licence
+
+MIT
