@@ -1,118 +1,72 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
-import { prisma } from "@/lib/prisma";
+import { getAccessToken } from "@/lib/auth";
 
-export async function GET(
-  _req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user) {
-      return NextResponse.json({ error: "Non autorisé" }, { status: 401 });
-    }
+const GATEWAY_URL = process.env.GATEWAY_URL || "http://gateway:8000";
 
-    const { id } = await params;
-
-    const conversation = await prisma.conversation.findFirst({
-      where: { id, userId: session.user.id },
-      include: {
-        messages: { orderBy: { createdAt: "asc" } },
-      },
-    });
-
-    if (!conversation) {
-      return NextResponse.json(
-        { error: "Conversation introuvable" },
-        { status: 404 }
-      );
-    }
-
-    return NextResponse.json(conversation);
-  } catch (error) {
-    console.error("Error fetching conversation:", error);
-    return NextResponse.json(
-      { error: "Erreur serveur" },
-      { status: 500 }
-    );
-  }
+function toMessage(row: any) {
+  return {
+    id: row.id,
+    content: row.content,
+    role: row.role,
+    createdAt: row.created_at,
+  };
 }
 
-export async function PATCH(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user) {
-      return NextResponse.json({ error: "Non autorisé" }, { status: 401 });
-    }
-
-    const { id } = await params;
-    const body = await req.json();
-    const { subject, gradeLevel, serie, mode, title } = body;
-
-    const conversation = await prisma.conversation.findFirst({
-      where: { id, userId: session.user.id },
-    });
-
-    if (!conversation) {
-      return NextResponse.json(
-        { error: "Conversation introuvable" },
-        { status: 404 }
-      );
-    }
-
-    const updated = await prisma.conversation.update({
-      where: { id },
-      data: {
-        ...(subject !== undefined ? { subject } : {}),
-        ...(gradeLevel !== undefined ? { gradeLevel } : {}),
-        ...(serie !== undefined ? { serie } : {}),
-        ...(mode !== undefined ? { mode } : {}),
-        ...(title !== undefined ? { title } : {}),
-      },
-    });
-
-    return NextResponse.json(updated);
-  } catch (error) {
-    console.error("Error updating conversation:", error);
-    return NextResponse.json({ error: "Erreur serveur" }, { status: 500 });
-  }
+function toConversation(row: any) {
+  return {
+    id: row.id,
+    title: row.title,
+    subject: row.subject,
+    gradeLevel: row.grade_level,
+    serie: row.serie,
+    mode: row.mode,
+    messages: (row.messages ?? []).map(toMessage),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }
 
-export async function DELETE(
-  _req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user) {
-      return NextResponse.json({ error: "Non autorisé" }, { status: 401 });
-    }
-
-    const { id } = await params;
-
-    const conversation = await prisma.conversation.findFirst({
-      where: { id, userId: session.user.id },
-    });
-
-    if (!conversation) {
-      return NextResponse.json(
-        { error: "Conversation introuvable" },
-        { status: 404 }
-      );
-    }
-
-    await prisma.conversation.delete({ where: { id } });
-
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    console.error("Error deleting conversation:", error);
-    return NextResponse.json(
-      { error: "Erreur serveur" },
-      { status: 500 }
-    );
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const accessToken = await getAccessToken(req);
+  if (!accessToken) {
+    return NextResponse.json({ error: "Non authentifié" }, { status: 401 });
   }
+
+  const res = await fetch(`${GATEWAY_URL}/api/chat/conversations/${id}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (!res.ok) {
+    return NextResponse.json({ error: "Conversation introuvable" }, { status: res.status });
+  }
+
+  const row = await res.json();
+  return NextResponse.json(toConversation(row));
+}
+
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const accessToken = await getAccessToken(req);
+  if (!accessToken) {
+    return NextResponse.json({ error: "Non authentifié" }, { status: 401 });
+  }
+
+  const body = await req.json().catch(() => ({}));
+
+  const res = await fetch(`${GATEWAY_URL}/api/chat/conversations/${id}`, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    return NextResponse.json({ error: "Erreur lors de la mise à jour" }, { status: res.status });
+  }
+
+  const row = await res.json();
+  return NextResponse.json(toConversation({ ...row, messages: [] }));
 }

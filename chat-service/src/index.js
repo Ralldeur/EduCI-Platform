@@ -82,6 +82,45 @@ app.get("/conversations/:id", async (req, res) => {
   res.json({ ...conversation, messages: messagesResult.rows });
 });
 
+// Mise à jour partielle d'une conversation (utilisé par ModeSelector côté
+// frontend quand l'élève change la matière/le niveau/la série/le mode en
+// cours de discussion).
+app.patch("/conversations/:id", async (req, res) => {
+  const { userId } = identity(req);
+  if (!userId) return res.status(401).json({ error: "Non authentifié" });
+
+  const allowedFields = { subject: "subject", gradeLevel: "grade_level", serie: "serie", mode: "mode", title: "title" };
+  const updates = [];
+  const values = [];
+  let i = 1;
+
+  for (const [bodyKey, column] of Object.entries(allowedFields)) {
+    if (req.body && Object.prototype.hasOwnProperty.call(req.body, bodyKey)) {
+      updates.push(`${column} = $${i}`);
+      values.push(req.body[bodyKey]);
+      i++;
+    }
+  }
+
+  if (updates.length === 0) {
+    return res.status(400).json({ error: "Aucun champ à mettre à jour" });
+  }
+
+  values.push(req.params.id, userId);
+  const result = await pool.query(
+    `UPDATE chat_conversations SET ${updates.join(", ")}, updated_at = now()
+     WHERE id = $${i} AND user_id = $${i + 1}
+     RETURNING *`,
+    values
+  );
+
+  if (result.rows.length === 0) {
+    return res.status(404).json({ error: "Conversation introuvable" });
+  }
+
+  res.json(result.rows[0]);
+});
+
 // --- Chat --------------------------------------------------------------
 
 app.post("/chat", async (req, res) => {
