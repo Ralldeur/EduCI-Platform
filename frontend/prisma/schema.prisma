@@ -1,0 +1,120 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id               String             @id @default(cuid())
+  name             String?
+  email            String             @unique
+  password         String
+  role             String             @default("STUDENT")
+  gradeLevel       String?
+  conversations    Conversation[]
+  exerciseAttempts ExerciseAttempt[]
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+}
+
+model Subject {
+  id       String    @id @default(cuid())
+  name     String    @unique
+  icon     String?
+  color    String?
+  chapters Chapter[]
+  lessons  Lesson[]
+}
+
+model Chapter {
+  id         String   @id @default(cuid())
+  title      String
+  orderNum   Int
+  subjectId  String
+  subject    Subject  @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  gradeLevel String
+  lessons    Lesson[]
+}
+
+model Lesson {
+  id         String     @id @default(cuid())
+  title      String
+  content    String
+  summary    String?
+  subjectId  String
+  subject    Subject    @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  chapterId  String
+  chapter    Chapter    @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  gradeLevel String
+  exercises  Exercise[]
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+}
+
+model Exercise {
+  id          String            @id @default(cuid())
+  question    String
+  answer      String
+  explanation String?
+  difficulty  String            @default("MEDIUM")
+  type        String            @default("OPEN")
+  options     String?
+  lessonId    String?
+  lesson      Lesson?           @relation(fields: [lessonId], references: [id], onDelete: SetNull)
+  subject     String?
+  gradeLevel  String
+  attempts    ExerciseAttempt[]
+  createdAt   DateTime          @default(now())
+}
+
+model ExerciseAttempt {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  exerciseId String
+  exercise   Exercise @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+  answer     String
+  score      Float?
+  feedback   String?
+  createdAt  DateTime @default(now())
+}
+
+model Conversation {
+  id         String    @id @default(cuid())
+  title      String?
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subject    String?
+  gradeLevel String?
+  serie      String?
+  mode       String    @default("CHAT")
+  messages   Message[]
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  content        String
+  role           String
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+}
+
+model ScrapedContent {
+  id         String   @id @default(cuid())
+  title      String
+  content    String
+  url        String
+  source     String
+  subject    String?
+  gradeLevel String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([url, title])
+}

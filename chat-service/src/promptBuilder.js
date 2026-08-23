@@ -1,5 +1,21 @@
 // Adapté de src/lib/ai.ts (buildSystemPrompt) du monolithe Next.js, avec le
 // RAG (ml-service) à la place des lessons Prisma + du scraping.
+//
+// Le programme scolaire ivoirien détaillé (APC, examens, chapitres par
+// matière/niveau) est porté depuis src/lib/curriculum.ts — voir curriculum.js
+// dans ce même dossier. Le bloc IVORIAN_CONTEXT qu'il fournit est plus riche
+// que l'ancrage générique utilisé auparavant ici ; on ne garde qu'une seule
+// version pour éviter le doublon et limiter la taille du prompt (voir
+// l'historique de dépassement TPM avec openai/gpt-oss-120b).
+//
+// ATTENTION FORMAT : buildCurriculumContext() attend gradeLevel au format
+// abrégé du monolithe ("TLE", "2NDE", "1ERE", "6EME"...), pas un libellé
+// complet comme "Terminale D". Si gradeLevel vient de Keycloak (attribut
+// grade_level actuellement au format "Terminale D"), il faudra le convertir
+// avant l'appel — sinon getChapters() ne trouvera silencieusement aucun
+// chapitre et le bloc "Programme officiel de ..." sera simplement omis.
+
+import { buildCurriculumContext } from "./curriculum.js";
 
 const MODE_INSTRUCTIONS = {
   CHAT: "Tu es un assistant éducatif. Réponds aux questions de l'élève de manière claire, pédagogique et adaptée à son niveau.",
@@ -40,10 +56,11 @@ export function buildSystemPrompt({ gradeLevel, subject, mode = "CHAT", serie, r
 
   const modeText = MODE_INSTRUCTIONS[mode] ?? MODE_INSTRUCTIONS.CHAT;
 
-  // TODO (à porter depuis src/lib/curriculum.ts du monolithe) : le bloc
-  // "PROGRAMME SCOLAIRE IVOIRIEN" détaillé par niveau/matière/série n'est
-  // pas encore repris ici. Sans lui, le prompt est fonctionnel mais moins
-  // strict sur le respect du programme officiel que dans le monolithe.
+  // Programme scolaire ivoirien (APC, examen national, chapitres officiels
+  // MENA/DPFC pour la matière/niveau donnés). Remplace l'ancien bloc générique
+  // "Ancre TOUJOURS tes exemples..." par une version plus riche et plus
+  // précise (voir curriculum.js).
+  const curriculumBlock = buildCurriculumContext(gradeLevel, subject, serie);
 
   return `${modeText}
 
@@ -53,8 +70,9 @@ ${levelText}
 ${subjectText}
 ${serie ? `Série BAC : ${serie}.` : ""}
 
+${curriculumBlock}
+
 Règles importantes :
-- Ancre TOUS tes exemples dans le contexte ivoirien (FCFA, villes ivoiriennes, cacao/café, auteurs ivoiriens, prénoms locaux). N'utilise jamais l'euro ou le dollar.
 - Adapte ton langage : collège = vocabulaire technique progressif ; lycée = rigueur académique.
 - Si l'élève demande de l'aide sans vouloir la réponse directe, donne des indices progressifs.
 - Encourage toujours l'élève et valorise ses efforts.

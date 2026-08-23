@@ -39,6 +39,49 @@ app.post("/conversations", async (req, res) => {
   res.status(201).json(result.rows[0]);
 });
 
+// Liste des conversations de l'utilisateur, plus récentes en premier
+// (pour la sidebar du frontend). Inclut le nombre de messages par
+// conversation, comme le faisait l'ancien monolithe (_count.messages).
+app.get("/conversations", async (req, res) => {
+  const { userId } = identity(req);
+  if (!userId) return res.status(401).json({ error: "Non authentifié" });
+
+  const result = await pool.query(
+    `SELECT c.*, COUNT(m.id)::int AS message_count
+     FROM chat_conversations c
+     LEFT JOIN chat_messages m ON m.conversation_id = c.id
+     WHERE c.user_id = $1
+     GROUP BY c.id
+     ORDER BY c.updated_at DESC`,
+    [userId]
+  );
+
+  res.json(result.rows);
+});
+
+// Détail d'une conversation avec son historique complet de messages
+// (pour afficher le fil de discussion quand on clique dessus dans la sidebar).
+app.get("/conversations/:id", async (req, res) => {
+  const { userId } = identity(req);
+  if (!userId) return res.status(401).json({ error: "Non authentifié" });
+
+  const convResult = await pool.query(
+    "SELECT * FROM chat_conversations WHERE id = $1 AND user_id = $2",
+    [req.params.id, userId]
+  );
+  const conversation = convResult.rows[0];
+  if (!conversation) {
+    return res.status(404).json({ error: "Conversation introuvable" });
+  }
+
+  const messagesResult = await pool.query(
+    "SELECT id, role, content, created_at FROM chat_messages WHERE conversation_id = $1 ORDER BY created_at ASC",
+    [req.params.id]
+  );
+
+  res.json({ ...conversation, messages: messagesResult.rows });
+});
+
 // --- Chat --------------------------------------------------------------
 
 app.post("/chat", async (req, res) => {
