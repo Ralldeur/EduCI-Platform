@@ -15,6 +15,9 @@ import Select from "@/components/ui/Select";
 import { SUBJECTS, ALL_GRADE_LEVELS } from "@/lib/utils";
 import { LYCEE_SERIES } from "@/lib/curriculum";
 import ReactMarkdown from "react-markdown";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import "katex/dist/katex.min.css";
 import toast from "react-hot-toast";
 import Link from "next/link";
 
@@ -243,7 +246,9 @@ export default function ExercisesPage() {
             </div>
 
             <div className="prose-chat text-sm mb-4">
-              <ReactMarkdown>{exercise.question}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                {exercise.question}
+              </ReactMarkdown>
             </div>
 
             {exercise.options && (
@@ -314,13 +319,17 @@ export default function ExercisesPage() {
                 <p className="font-medium text-[var(--color-secondary)] mb-1">
                   Réponse :
                 </p>
-                <ReactMarkdown>{exercise.answer}</ReactMarkdown>
+                <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                  {exercise.answer}
+                </ReactMarkdown>
                 {exercise.explanation && (
                   <>
                     <p className="font-medium text-[var(--color-secondary)] mt-2 mb-1">
                       Explication :
                     </p>
-                    <ReactMarkdown>{exercise.explanation}</ReactMarkdown>
+                    <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                      {exercise.explanation}
+                    </ReactMarkdown>
                   </>
                 )}
               </div>

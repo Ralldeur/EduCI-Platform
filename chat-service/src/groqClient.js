@@ -23,13 +23,47 @@ function getGroqClient() {
 export async function streamAIResponse(messages, { temperature = 0.7, maxTokens = 2000 } = {}) {
   const client = getGroqClient();
 
-    return client.chat.completions.create({
+  return client.chat.completions.create({
     model: "qwen/qwen3.6-27b",
     messages,
     temperature,
     max_tokens: maxTokens,
     stream: true,
     reasoning_format: "hidden",
-    reasoning_effort: "none",
+    // "default" (pas "none") : laisse Qwen raisonner en interne avant de
+    // répondre, sans jamais exposer ce raisonnement (reasoning_format
+    // hidden). Nécessaire pour des contenus qui demandent une vérification
+    // de cohérence (ex. génération d'exercices avec contraintes numériques
+    // précises) — sans espace de raisonnement, le modèle "pensait à voix
+    // haute" directement dans la réponse visible à l'élève quand il
+    // détectait une incohérence en cours de génération (observé le 24/08).
+    // Qwen3 n'accepte que "none" ou "default" pour ce paramètre (pas
+    // "low"/"medium"/"high", réservé aux modèles GPT-OSS).
+    reasoning_effort: "default",
   });
+}
+
+/**
+ * Version non-streaming, pour les cas où on a besoin d'une réponse JSON
+ * complète d'un coup plutôt que d'un flux de tokens (génération/correction
+ * d'exercices — voir POST /exercises/generate et /exercises/correct).
+ * Retourne directement le texte JSON brut (à parser par l'appelant), pas
+ * un objet déjà parsé, pour rester symétrique avec generateAIResponse du
+ * monolithe d'origine.
+ */
+export async function generateJSON(messages, { temperature = 0.7, maxTokens = 2000 } = {}) {
+  const client = getGroqClient();
+
+  const completion = await client.chat.completions.create({
+    model: "qwen/qwen3.6-27b",
+    messages,
+    temperature,
+    max_tokens: maxTokens,
+    stream: false,
+    response_format: { type: "json_object" },
+    reasoning_format: "hidden",
+    reasoning_effort: "default",
+  });
+
+  return completion.choices[0]?.message?.content ?? "";
 }

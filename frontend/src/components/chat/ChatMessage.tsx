@@ -2,6 +2,9 @@
 
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import "katex/dist/katex.min.css";
 import { cn } from "@/lib/utils";
 import { Bot, User } from "lucide-react";
 
@@ -50,7 +53,9 @@ export default function ChatMessage({
           {isUser ? (
             <p className="whitespace-pre-wrap">{content}</p>
           ) : (
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>
+              {content}
+            </ReactMarkdown>
           )}
         </div>
       </div>

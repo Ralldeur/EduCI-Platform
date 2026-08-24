@@ -4,7 +4,8 @@ import express from "express";
 import { pool, initSchema } from "./db.js";
 import { searchRag } from "./ragClient.js";
 import { buildSystemPrompt, docTypeForMode } from "./promptBuilder.js";
-import { streamAIResponse } from "./groqClient.js";
+import { streamAIResponse, generateJSON } from "./groqClient.js";
+import { buildCurriculumContext, getCycle, IVORIAN_EXAMS } from "./curriculum.js";
 
 const app = express();
 const PORT = process.env.PORT || 8082;
@@ -224,6 +225,155 @@ app.post("/chat", async (req, res) => {
   } catch (err) {
     console.error("[chat-service] erreur pendant le stream:", err);
     res.end();
+  }
+});
+
+// --- Exercices ---------------------------------------------------------
+// Génération/correction ponctuelle, sans lien avec une conversation ni
+// sauvegarde en base (comme dans le monolithe d'origine). Réponse JSON
+// complète (non-streaming), contrairement à /chat.
+
+const EXERCISE_TYPE_INSTRUCTIONS = {
+  QCM: "Questions à choix multiples avec 4 options (A, B, C, D). Indique la bonne réponse.",
+  OPEN: "Questions ouvertes nécessitant une réponse détaillée.",
+  TRUE_FALSE: "Questions Vrai/Faux avec justification.",
+  FILL_BLANK: "Phrases à compléter avec les mots manquants.",
+};
+
+app.post("/exercises/generate", async (req, res) => {
+  const { userId } = identity(req);
+  if (!userId) return res.status(401).json({ error: "Non authentifié" });
+
+  const { subject, gradeLevel, serie, topic, difficulty, type, count } = req.body || {};
+  if (!subject || !gradeLevel) {
+    return res.status(400).json({ error: "Matière et niveau requis" });
+  }
+
+  // RAG : contexte d'exercices déjà ingérés pertinents pour le sujet demandé
+  // (docType "exercice" imposé, cohérent avec docTypeForMode côté /chat).
+  const ragResults = await searchRag(topic || subject, {
+    subject,
+    gradeLevel,
+    docType: "exercice",
+    topK: 3,
+  });
+  const ragBlock =
+    ragResults.length > 0
+      ? `\n\nExtraits d'exercices déjà disponibles pour t'inspirer :\n${ragResults
+          .map((r) => `- ${r.title}: ${r.text.substring(0, 300)}`)
+          .join("\n")}`
+      : "";
+
+  const curriculumBlock = buildCurriculumContext(gradeLevel, subject, serie);
+  const exam = IVORIAN_EXAMS[getCycle(gradeLevel)];
+  const typeInstruction = EXERCISE_TYPE_INSTRUCTIONS[type ?? "OPEN"] ?? EXERCISE_TYPE_INSTRUCTIONS.OPEN;
+
+  const prompt = `Génère ${count ?? 3} exercices de ${subject} pour un élève de ${gradeLevel} en Côte d'Ivoire.
+${topic ? `Sujet spécifique : ${topic}` : ""}
+Difficulté : ${difficulty ?? "MEDIUM"}
+Type : ${typeInstruction}
+
+=== PROGRAMME OFFICIEL IVOIRIEN (respecte-le strictement) ===
+${curriculumBlock}
+=== FIN DU PROGRAMME ===
+
+Contraintes :
+- Reste STRICTEMENT dans le programme ivoirien ci-dessus pour ce niveau (pas de notions hors-programme).
+- Ancre les énoncés dans le contexte ivoirien (FCFA, villes ivoiriennes, cacao/café, prénoms locaux) ; n'utilise jamais l'euro ni le dollar.
+- Inspire-toi du format de l'examen national : ${exam.name} (${exam.full}).${ragBlock}
+
+Réponds en JSON avec le format suivant :
+{
+  "exercises": [
+    {
+      "question": "...",
+      "answer": "...",
+      "explanation": "...",
+      "options": ["A) ...", "B) ...", "C) ...", "D) ..."]
+    }
+  ]
+}
+(le champ "options" n'est nécessaire que pour le type QCM ; omets-le sinon)`;
+
+  let raw;
+  try {
+    raw = await generateJSON([
+      {
+        role: "system",
+        content: "Tu es un générateur d'exercices pour le programme scolaire ivoirien. Réponds uniquement en JSON valide.",
+      },
+      { role: "user", content: prompt },
+    ]);
+  } catch (err) {
+    console.error("[chat-service] échec génération exercices:", err.message);
+    return res.status(502).json({ error: "IA indisponible pour le moment" });
+  }
+
+  try {
+    const exercises = JSON.parse(raw);
+    res.json(exercises);
+  } catch (err) {
+    console.error("[chat-service] réponse IA non-JSON pour exercises/generate:", raw);
+    res.status(502).json({ error: "Réponse invalide de l'IA" });
+  }
+});
+
+app.post("/exercises/correct", async (req, res) => {
+  const { userId } = identity(req);
+  if (!userId) return res.status(401).json({ error: "Non authentifié" });
+
+  const { question, studentAnswer, correctAnswer, subject, gradeLevel } = req.body || {};
+  if (!question || !studentAnswer) {
+    return res.status(400).json({ error: "Question et réponse de l'élève requises" });
+  }
+
+  const prompt = `Corrige la réponse de cet élève de ${gradeLevel ?? "niveau non précisé"} en ${subject ?? "matière non précisée"}.
+
+Question : ${question}
+${correctAnswer ? `Réponse attendue : ${correctAnswer}` : ""}
+Réponse de l'élève : ${studentAnswer}
+
+Donne :
+1. Une note sur 20
+2. Les points positifs
+3. Les erreurs identifiées
+4. La correction détaillée étape par étape
+5. Des conseils pour s'améliorer
+
+Réponds en JSON avec le format :
+{
+  "score": 15,
+  "feedback": "...",
+  "positives": ["..."],
+  "errors": ["..."],
+  "correction": "...",
+  "tips": ["..."]
+}`;
+
+  let raw;
+  try {
+    raw = await generateJSON(
+      [
+        {
+          role: "system",
+          content:
+            "Tu es un correcteur pédagogique bienveillant pour le programme scolaire ivoirien (MENA/DPFC, Approche Par les Compétences). Note sur 20 selon le barème ivoirien, emploie le vocabulaire APC et des exemples ancrés en Côte d'Ivoire (FCFA, villes ivoiriennes). Réponds uniquement en JSON valide.",
+        },
+        { role: "user", content: prompt },
+      ],
+      { temperature: 0.5 }
+    );
+  } catch (err) {
+    console.error("[chat-service] échec correction exercice:", err.message);
+    return res.status(502).json({ error: "IA indisponible pour le moment" });
+  }
+
+  try {
+    const correction = JSON.parse(raw);
+    res.json(correction);
+  } catch (err) {
+    console.error("[chat-service] réponse IA non-JSON pour exercises/correct:", raw);
+    res.status(502).json({ error: "Réponse invalide de l'IA" });
   }
 });
 
