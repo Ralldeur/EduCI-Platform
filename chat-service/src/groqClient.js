@@ -20,7 +20,7 @@ function getGroqClient() {
  * n'est configurée — c'est à l'appelant de décider quoi faire (ex.
  * réponse de démo, comme dans le monolithe).
  */
-export async function streamAIResponse(messages, { temperature = 0.7, maxTokens = 2000 } = {}) {
+export async function streamAIResponse(messages, { temperature = 0.7, maxTokens = 6000 } = {}) {
   const client = getGroqClient();
 
   return client.chat.completions.create({
@@ -51,7 +51,7 @@ export async function streamAIResponse(messages, { temperature = 0.7, maxTokens 
  * un objet déjà parsé, pour rester symétrique avec generateAIResponse du
  * monolithe d'origine.
  */
-export async function generateJSON(messages, { temperature = 0.7, maxTokens = 2000 } = {}) {
+export async function generateJSON(messages, { temperature = 0.7, maxTokens = 6000 } = {}) {
   const client = getGroqClient();
 
   const completion = await client.chat.completions.create({
