@@ -30,6 +30,11 @@ def health():
     return {"status": "UP"}
 
 
+@app.get("/admin/stats")
+def admin_stats():
+    return {"totalDocuments": pipeline.count_documents()}
+
+
 @app.post("/lessons/ingest")
 async def ingest_lesson(
     file: UploadFile,

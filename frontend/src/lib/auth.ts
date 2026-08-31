@@ -1,6 +1,6 @@
 import { type NextAuthOptions } from "next-auth";
 import KeycloakProvider from "next-auth/providers/keycloak";
-import { getToken } from "next-auth/jwt";
+import { getToken, type JWT } from "next-auth/jwt";
 import type { NextRequest } from "next/server";
 
 // Authentification déléguée à Keycloak (realm "educi") au lieu de
@@ -10,11 +10,33 @@ import type { NextRequest } from "next/server";
 //
 // Variables d'environnement requises (voir .env.example) :
 //   KEYCLOAK_CLIENT_ID     — "educi-frontend" (client public, PKCE)
-//   KEYCLOAK_CLIENT_SECRET — vide/non utilisé pour un client public ; laisser
-//                            une valeur factice si NextAuth l'exige, sinon
-//                            passer le client en "confidential" côté Keycloak
-//                            et renseigner le vrai secret ici.
-//   KEYCLOAK_ISSUER        — "http://localhost:8080/realms/educi"
+//   KEYCLOAK_CLIENT_SECRET — vide/non utilisé pour un client public.
+//   KEYCLOAK_ISSUER        — "http://keycloak.local:8080/realms/educi".
+//                            Résoluble à l'identique par le NAVIGATEUR (via
+//                            l'entrée `keycloak.local` du fichier hosts) et
+//                            par le conteneur frontend (via `extra_hosts:
+//                            keycloak.local:host-gateway` dans
+//                            docker-compose.yml) — plus besoin de distinguer
+//                            une URL publique d'une URL interne Docker.
+const KEYCLOAK_ISSUER = process.env.KEYCLOAK_ISSUER!;
+
+// Forme du profil OIDC renvoyé par Keycloak, avec les claims personnalisés
+// exposés via les protocol mappers du realm (voir keycloak/realm-export.json).
+interface KeycloakProfile {
+  sub: string;
+  realm_access?: { roles?: string[] };
+  grade_level?: string | null;
+  bac_series?: string | null;
+}
+
+// Forme de la réponse de l'endpoint token de Keycloak (grant refresh_token).
+interface KeycloakTokenResponse {
+  access_token: string;
+  refresh_token?: string;
+  expires_in: number;
+  error?: string;
+  error_description?: string;
+}
 
 /**
  * Demande un nouvel access_token à Keycloak à partir du refresh_token,
@@ -26,9 +48,9 @@ import type { NextRequest } from "next/server";
  * l'utilisateur (voir observé le 23/08 : conversations qui "disparaissent"
  * après quelques minutes d'usage).
  */
-async function refreshAccessToken(token: any) {
+async function refreshAccessToken(token: JWT): Promise<JWT> {
   try {
-    const url = `${process.env.KEYCLOAK_ISSUER}/protocol/openid-connect/token`;
+    const url = `${KEYCLOAK_ISSUER}/protocol/openid-connect/token`;
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -36,11 +58,11 @@ async function refreshAccessToken(token: any) {
         client_id: process.env.KEYCLOAK_CLIENT_ID!,
         client_secret: process.env.KEYCLOAK_CLIENT_SECRET ?? "",
         grant_type: "refresh_token",
-        refresh_token: token.refreshToken,
+        refresh_token: token.refreshToken ?? "",
       }),
     });
 
-    const refreshed = await res.json();
+    const refreshed: KeycloakTokenResponse = await res.json();
     if (!res.ok) throw refreshed;
 
     return {
@@ -52,6 +74,7 @@ async function refreshAccessToken(token: any) {
       // Keycloak peut renvoyer un nouveau refresh_token (rotation) ; s'il
       // n'en renvoie pas, on garde l'ancien.
       refreshToken: refreshed.refresh_token ?? token.refreshToken,
+      error: undefined,
     };
   } catch (err) {
     console.error("[auth] échec du rafraîchissement du token Keycloak:", err);
@@ -68,7 +91,7 @@ export const authOptions: NextAuthOptions = {
     KeycloakProvider({
       clientId: process.env.KEYCLOAK_CLIENT_ID!,
       clientSecret: process.env.KEYCLOAK_CLIENT_SECRET ?? "",
-      issuer: process.env.KEYCLOAK_ISSUER,
+      issuer: KEYCLOAK_ISSUER,
     }),
   ],
   session: {
@@ -83,19 +106,15 @@ export const authOptions: NextAuthOptions = {
     async jwt({ token, account, profile }) {
       // Connexion initiale : `account` n'est présent qu'à ce moment-là.
       if (account && profile) {
-        token.id = profile.sub;
+        const p = profile as unknown as KeycloakProfile;
+
+        token.id = p.sub;
         token.accessToken = account.access_token;
         token.idToken = account.id_token;
         token.refreshToken = account.refresh_token;
         // account.expires_at est un timestamp Unix en SECONDES (fourni par
         // next-auth à partir de expires_in) ; on le convertit en ms.
-        token.accessTokenExpires = (account.expires_at as number) * 1000;
-
-        const p = profile as unknown as {
-          realm_access?: { roles?: string[] };
-          grade_level?: string | null;
-          bac_series?: string | null;
-        };
+        token.accessTokenExpires = (account.expires_at ?? 0) * 1000;
         token.roles = p.realm_access?.roles ?? [];
         token.gradeLevel = p.grade_level ?? null;
         token.serie = p.bac_series ?? null;
@@ -105,7 +124,7 @@ export const authOptions: NextAuthOptions = {
 
       // Appels suivants : si l'access_token est encore valide (avec 30s de
       // marge de sécurité), on ne touche à rien.
-      if (Date.now() < (token.accessTokenExpires as number) - 30_000) {
+      if (Date.now() < (token.accessTokenExpires ?? 0) - 30_000) {
         return token;
       }
 
@@ -113,18 +132,11 @@ export const authOptions: NextAuthOptions = {
       return refreshAccessToken(token);
     },
     async session({ session, token }) {
-      if (session.user) {
-        const s = session.user as unknown as {
-          id: string;
-          roles: string[];
-          gradeLevel: string | null;
-          serie: string | null;
-        };
-        s.id = token.id as string;
-        s.roles = (token.roles as string[]) ?? [];
-        s.gradeLevel = (token.gradeLevel as string | null) ?? null;
-        s.serie = (token.serie as string | null) ?? null;
-      }
+      session.user.id = token.id;
+      session.user.roles = token.roles ?? [];
+      session.user.gradeLevel = token.gradeLevel ?? null;
+      session.user.serie = token.serie ?? null;
+
       // Le access_token Keycloak est nécessaire côté serveur (routes API du
       // frontend) pour appeler le gateway en tant qu'utilisateur authentifié.
       // On NE l'expose PAS ici sur `session` (qui atterrit côté client) —
@@ -135,9 +147,10 @@ export const authOptions: NextAuthOptions = {
       // le signale sur la session pour qu'un composant client puisse un
       // jour détecter l'erreur et forcer une reconnexion propre plutôt que
       // de laisser l'utilisateur face à des 401 silencieux.
-      if ((token as any).error) {
-        (session as any).error = (token as any).error;
+      if (token.error) {
+        session.error = token.error;
       }
+
       return session;
     },
   },
@@ -164,5 +177,27 @@ export const authOptions: NextAuthOptions = {
  */
 export async function getAccessToken(req: NextRequest): Promise<string | undefined> {
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
-  return token?.accessToken as string | undefined;
+  return token?.accessToken;
+}
+
+/**
+ * Vérifie que l'utilisateur courant est authentifié ET possède le rôle
+ * ROLE_ADMIN, pour protéger les routes API du dossier src/app/api/admin/.
+ * Distingue 401 (pas connecté) de 403 (connecté mais pas admin), pour que
+ * le frontend puisse rediriger vers /login ou vers /chat selon le cas.
+ */
+export async function requireAdmin(
+  req: NextRequest
+): Promise<{ accessToken: string } | { error: string; status: 401 | 403 }> {
+  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
+  if (!token) {
+    return { error: "Non authentifié", status: 401 };
+  }
+
+  const roles = (token.roles as string[] | undefined) ?? [];
+  if (!roles.includes("ROLE_ADMIN")) {
+    return { error: "Accès réservé aux administrateurs", status: 403 };
+  }
+
+  return { accessToken: token.accessToken as string };
 }

@@ -20,6 +20,10 @@ const NAV_ITEMS = [
   { href: "/admin/users", icon: Users, label: "Utilisateurs" },
 ];
 
+// /admin reconstruit sur l'architecture microservices (Keycloak Admin API
+// pour les utilisateurs, chat-service/ml-service pour les stats) — voir
+// cahier-des-charges-admin.md. session.user.roles est un tableau (format
+// Keycloak, ex. ["ROLE_STUDENT"]) : voir src/types/next-auth.d.ts.
 export default function AdminLayout({
   children,
 }: {
@@ -29,13 +33,15 @@ export default function AdminLayout({
   const router = useRouter();
   const pathname = usePathname();
 
+  const isAdmin = session?.user?.roles?.includes("ROLE_ADMIN") ?? false;
+
   useEffect(() => {
     if (status === "unauthenticated") {
       router.push("/login");
-    } else if (status === "authenticated" && session?.user?.role !== "ADMIN") {
+    } else if (status === "authenticated" && !isAdmin) {
       router.push("/chat");
     }
-  }, [status, session, router]);
+  }, [status, isAdmin, router]);
 
   if (status === "loading") {
     return (
@@ -45,7 +51,7 @@ export default function AdminLayout({
     );
   }
 
-  if (!session || session.user.role !== "ADMIN") return null;
+  if (!session || !isAdmin) return null;
 
   return (
     <div className="min-h-screen bg-[var(--color-background)]">

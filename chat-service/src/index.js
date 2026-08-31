@@ -21,6 +21,23 @@ function identity(req) {
   return { userId: req.headers["x-user-id"] };
 }
 
+// Traduit un échec d'appel Groq en réponse HTTP adaptée. PROMPT_TOO_LARGE
+// (voir computeMaxTokens dans groqClient.js) signifie que le prompt à
+// envoyer est déjà trop volumineux pour le budget TPM restant, même avec
+// le plancher minimum de tokens de réponse — ça arrive sur une
+// conversation avec beaucoup d'historique, pas un simple souci de
+// disponibilité de l'IA, donc on le distingue avec un message actionnable
+// plutôt que le générique "IA indisponible".
+function sendGroqError(res, err, context) {
+  console.error(`[chat-service] échec ${context}:`, err.message);
+  if (err.code === "PROMPT_TOO_LARGE") {
+    return res.status(413).json({
+      error: "Cette conversation est trop longue pour l'IA — démarrez une nouvelle conversation ou réduisez le contexte.",
+    });
+  }
+  return res.status(502).json({ error: "IA indisponible pour le moment" });
+}
+
 // --- Conversations ---------------------------------------------------
 
 app.post("/conversations", async (req, res) => {
@@ -187,8 +204,7 @@ app.post("/chat", async (req, res) => {
   try {
     stream = await streamAIResponse(chatMessages);
   } catch (err) {
-    console.error("[chat-service] échec appel Groq:", err.message);
-    return res.status(502).json({ error: "IA indisponible pour le moment" });
+    return sendGroqError(res, err, "appel Groq");
   }
 
   res.writeHead(200, {
@@ -204,6 +220,14 @@ app.post("/chat", async (req, res) => {
       if (content) {
         fullResponse += content;
         res.write(`data: ${JSON.stringify({ content })}\n\n`);
+      }
+      const finishReason = chunk.choices[0]?.finish_reason;
+      if (finishReason) {
+        console.log(
+          "[chat-service] fin du stream Groq:",
+          "finish_reason=", finishReason,
+          "usage=", JSON.stringify(chunk.x_groq?.usage ?? chunk.usage ?? null)
+        );
       }
     }
 
@@ -280,7 +304,8 @@ ${curriculumBlock}
 Contraintes :
 - Reste STRICTEMENT dans le programme ivoirien ci-dessus pour ce niveau (pas de notions hors-programme).
 - Ancre les énoncés dans le contexte ivoirien (FCFA, villes ivoiriennes, cacao/café, prénoms locaux) ; n'utilise jamais l'euro ni le dollar.
-- Inspire-toi du format de l'examen national : ${exam.name} (${exam.full}).${ragBlock}
+- Inspire-toi du format de l'examen national : ${exam.name} (${exam.full}).
+- RÈGLE DE COHÉRENCE NUMÉRIQUE : avant de finaliser ta réponse, si elle implique une équation, une racine, ou une propriété numérique à vérifier, assure-toi en interne (silencieusement) que les valeurs choisies donnent un résultat exact et simple (entier ou fraction simple), adapté au niveau de l'élève. Si un premier jeu de paramètres ne donne pas un résultat propre, choisis-en un autre et recommence — SANS JAMAIS montrer tes tentatives, hésitations, ou corrections à l'élève. La réponse finale doit se présenter comme si elle avait été correcte du premier coup : aucune trace visible de mots comme « attends », « réexaminons », « en fait », « pour simplifier », ou toute autre marque de raisonnement de repli.${ragBlock}
 
 Réponds en JSON avec le format suivant :
 {
@@ -305,8 +330,7 @@ Réponds en JSON avec le format suivant :
       { role: "user", content: prompt },
     ]);
   } catch (err) {
-    console.error("[chat-service] échec génération exercices:", err.message);
-    return res.status(502).json({ error: "IA indisponible pour le moment" });
+    return sendGroqError(res, err, "génération exercices");
   }
 
   try {
@@ -364,8 +388,7 @@ Réponds en JSON avec le format :
       { temperature: 0.5 }
     );
   } catch (err) {
-    console.error("[chat-service] échec correction exercice:", err.message);
-    return res.status(502).json({ error: "IA indisponible pour le moment" });
+    return sendGroqError(res, err, "correction exercice");
   }
 
   try {
@@ -375,6 +398,25 @@ Réponds en JSON avec le format :
     console.error("[chat-service] réponse IA non-JSON pour exercises/correct:", raw);
     res.status(502).json({ error: "Réponse invalide de l'IA" });
   }
+});
+
+// --- Admin --------------------------------------------------------------
+// Pas de vérification ROLE_ADMIN ici : comme pour le reste des routes de
+// chat-service, l'autorisation est décidée en amont par le frontend (voir
+// frontend/src/lib/auth.ts::requireAdmin) avant même d'appeler le gateway —
+// même convention que /conversations (qui ne vérifie pas non plus de rôle,
+// seulement l'identité via x-user-id).
+
+app.get("/admin/stats", async (_req, res) => {
+  const [conversations, messages] = await Promise.all([
+    pool.query("SELECT COUNT(*)::int AS count FROM chat_conversations"),
+    pool.query("SELECT COUNT(*)::int AS count FROM chat_messages"),
+  ]);
+
+  res.json({
+    totalConversations: conversations.rows[0].count,
+    totalMessages: messages.rows[0].count,
+  });
 });
 
 initSchema()

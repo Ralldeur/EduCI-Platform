@@ -9,7 +9,20 @@ import { getAccessToken } from "@/lib/auth";
 // navigateur ailleurs dans l'app.
 const GATEWAY_URL = process.env.GATEWAY_URL || "http://gateway:8000";
 
-function toConversationSummary(row: any) {
+/** Forme d'une ligne "conversation" telle que renvoyée par chat-service (snake_case, colonnes Postgres). */
+interface ConversationRow {
+  id: string;
+  title: string | null;
+  subject: string | null;
+  grade_level: string | null;
+  serie: string | null;
+  mode: string;
+  created_at: string;
+  updated_at: string;
+  message_count?: number;
+}
+
+function toConversationSummary(row: ConversationRow) {
   return {
     id: row.id,
     title: row.title,
@@ -36,7 +49,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Erreur lors du chargement des conversations" }, { status: res.status });
   }
 
-  const rows = await res.json();
+  const rows: ConversationRow[] = await res.json();
   return NextResponse.json(rows.map(toConversationSummary));
 }
 
@@ -64,7 +77,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Erreur lors de la création de la conversation" }, { status: res.status });
   }
 
-  const row = await res.json();
+  const row: ConversationRow = await res.json();
   return NextResponse.json(
     {
       id: row.id,

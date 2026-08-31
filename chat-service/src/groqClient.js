@@ -2,6 +2,75 @@ import Groq from "groq-sdk";
 
 let groq;
 
+// Plafond TPM (tokens/minute) de l'organisation sur le tier Groq actuel
+// (voir erreur "rate_limit_exceeded" observée le 31/08 — remonter cette
+// valeur si le compte est upgradé, voir console.groq.com/settings/billing).
+const TPM_LIMIT = Number(process.env.GROQ_TPM_LIMIT) || 8000;
+// Marge de sécurité : l'estimation de estimateTokens() est approximative,
+// et Groq facture le prompt légèrement différemment selon le formatage
+// interne des messages (rôles, séparateurs) — on ne veut pas retomber sur
+// un 413 à cause d'un sous-comptage.
+const SAFETY_MARGIN = 500;
+// Plancher en dessous duquel on refuse d'appeler Groq plutôt que d'envoyer
+// une requête presque garantie de retomber sur le bug "raisonnement caché
+// consomme tout le budget → réponse vide" (voir groqClient.js plus bas).
+const MIN_MAX_TOKENS = 2500;
+
+// Estimation grossière (~3 caractères/token). Mesuré le 31/08 sur ce
+// contenu (français pédagogique + programme scolaire ivoirien) : le
+// ratio ~4 caractères/token (correct pour de l'anglais générique)
+// sous-comptait le vrai tokenizer Qwen de ~37% (promptEstimé 3209-3237
+// vs prompt réel 4388-4426 déduit des erreurs 413 Groq), faisant
+// dépasser TPM_LIMIT malgré computeMaxTokens(). ~3 caractères/token colle
+// beaucoup plus près du réel pour ce type de contenu (accents, vocabulaire
+// technique, contenu structuré).
+function estimateTokens(text) {
+  return Math.ceil((text ?? "").length / 3);
+}
+
+// Doit couvrir TOUT ce qui compte dans le prompt réellement envoyé à
+// Groq — l'historique de conversation et le contexte RAG injecté sont
+// déjà inclus ici puisqu'ils font partie de `messages` (voir chatMessages
+// dans index.js /chat, et le prompt RAG+programme dans /exercises/generate),
+// pas seulement le system prompt.
+function estimatePromptTokens(messages) {
+  return messages.reduce(
+    // +4 : overhead approximatif par message (rôle, séparateurs internes).
+    (total, m) => total + estimateTokens(m.content) + 4,
+    0
+  );
+}
+
+/**
+ * Calcule le max_tokens réellement envoyé à Groq, borné par ce qu'il reste
+ * de budget TPM une fois le prompt estimé déduit. Lève une erreur
+ * (err.code === "PROMPT_TOO_LARGE") plutôt que de laisser Groq renvoyer un
+ * 413 brut, si même le plancher MIN_MAX_TOKENS ferait dépasser TPM_LIMIT —
+ * ça peut arriver sur une conversation avec beaucoup d'historique.
+ */
+function computeMaxTokens(messages, desiredMaxTokens) {
+  const promptTokens = estimatePromptTokens(messages);
+  const available = TPM_LIMIT - promptTokens - SAFETY_MARGIN;
+  const finalMaxTokens = Math.min(desiredMaxTokens, available);
+
+  // Diagnostic temporaire (voir désaccord observé le 31/08 entre cette
+  // estimation et le "Requested" réel renvoyé par Groq en cas de 413) —
+  // à retirer une fois l'estimation fiabilisée.
+  console.log(
+    `[chat-service] budget Groq: promptEstimé=${promptTokens} maxTokens=${finalMaxTokens} totalEstimé=${promptTokens + finalMaxTokens}`
+  );
+
+  if (available < MIN_MAX_TOKENS) {
+    const err = new Error(
+      `prompt estimé à ${promptTokens} tokens, budget restant ${available} < minimum ${MIN_MAX_TOKENS} (plafond TPM ${TPM_LIMIT})`
+    );
+    err.code = "PROMPT_TOO_LARGE";
+    throw err;
+  }
+
+  return finalMaxTokens;
+}
+
 // Instancié à la demande (pas au chargement du module) : si GROQ_API_KEY
 // manque, seule la route /chat échoue proprement — le reste du service
 // (/health, /conversations) continue de fonctionner normalement.
@@ -23,11 +92,20 @@ function getGroqClient() {
 export async function streamAIResponse(messages, { temperature = 0.7, maxTokens = 6000 } = {}) {
   const client = getGroqClient();
 
+  // Groq compte (prompt_tokens + max_tokens) contre la limite TPM du
+  // compte, PAS la consommation réelle — un prompt volumineux (historique
+  // de conversation long, contexte RAG) peut à lui seul dépasser le
+  // budget disponible même avec un maxTokens par défaut raisonnable
+  // (observé le 31/08 : 413 rate_limit_exceeded malgré maxTokens=6000,
+  // à cause d'un prompt à ~4350 tokens). D'où le calcul dynamique ici,
+  // plutôt qu'une constante fixe — voir computeMaxTokens() plus haut.
+  const finalMaxTokens = computeMaxTokens(messages, maxTokens);
+
   return client.chat.completions.create({
     model: "qwen/qwen3.6-27b",
     messages,
     temperature,
-    max_tokens: maxTokens,
+    max_tokens: finalMaxTokens,
     stream: true,
     reasoning_format: "hidden",
     // "default" (pas "none") : laisse Qwen raisonner en interne avant de
@@ -39,6 +117,13 @@ export async function streamAIResponse(messages, { temperature = 0.7, maxTokens 
     // détectait une incohérence en cours de génération (observé le 24/08).
     // Qwen3 n'accepte que "none" ou "default" pour ce paramètre (pas
     // "low"/"medium"/"high", réservé aux modèles GPT-OSS).
+    //
+    // Contrepartie connue de computeMaxTokens() : si le budget calculé est
+    // faible (prompt déjà volumineux) et que le raisonnement caché le
+    // consomme en entier, la réponse visible peut arriver vide ou tronquée
+    // (finish_reason "length") — voir le log ajouté plus bas dans
+    // index.js. Compromis accepté côté produit tant que le tier Groq n'est
+    // pas upgradé.
     reasoning_effort: "default",
   });
 }
@@ -53,12 +138,13 @@ export async function streamAIResponse(messages, { temperature = 0.7, maxTokens 
  */
 export async function generateJSON(messages, { temperature = 0.7, maxTokens = 6000 } = {}) {
   const client = getGroqClient();
+  const finalMaxTokens = computeMaxTokens(messages, maxTokens);
 
   const completion = await client.chat.completions.create({
     model: "qwen/qwen3.6-27b",
     messages,
     temperature,
-    max_tokens: maxTokens,
+    max_tokens: finalMaxTokens,
     stream: false,
     response_format: { type: "json_object" },
     reasoning_format: "hidden",

@@ -32,6 +32,9 @@ class RagPipeline:
                 vectors_config=qm.VectorParams(size=VECTOR_SIZE, distance=qm.Distance.COSINE),
             )
 
+    def count_documents(self) -> int:
+        return self.qdrant.get_collection(COLLECTION).points_count
+
     def embed(self, text: str) -> list[float]:
         with httpx.Client(timeout=60) as client:
             r = client.post(

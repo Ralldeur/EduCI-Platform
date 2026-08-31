@@ -3,7 +3,28 @@ import { getAccessToken } from "@/lib/auth";
 
 const GATEWAY_URL = process.env.GATEWAY_URL || "http://gateway:8000";
 
-function toMessage(row: any) {
+/** Forme d'une ligne "message" telle que renvoyée par chat-service (snake_case). */
+interface MessageRow {
+  id: string;
+  content: string;
+  role: string;
+  created_at: string;
+}
+
+/** Forme d'une conversation détaillée (avec messages) renvoyée par chat-service. */
+interface ConversationDetailRow {
+  id: string;
+  title: string | null;
+  subject: string | null;
+  grade_level: string | null;
+  serie: string | null;
+  mode: string;
+  created_at: string;
+  updated_at: string;
+  messages?: MessageRow[];
+}
+
+function toMessage(row: MessageRow) {
   return {
     id: row.id,
     content: row.content,
@@ -12,7 +33,7 @@ function toMessage(row: any) {
   };
 }
 
-function toConversation(row: any) {
+function toConversation(row: ConversationDetailRow) {
   return {
     id: row.id,
     title: row.title,
@@ -41,7 +62,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     return NextResponse.json({ error: "Conversation introuvable" }, { status: res.status });
   }
 
-  const row = await res.json();
+  const row: ConversationDetailRow = await res.json();
   return NextResponse.json(toConversation(row));
 }
 
@@ -67,6 +88,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     return NextResponse.json({ error: "Erreur lors de la mise à jour" }, { status: res.status });
   }
 
-  const row = await res.json();
+  const row: ConversationDetailRow = await res.json();
   return NextResponse.json(toConversation({ ...row, messages: [] }));
 }

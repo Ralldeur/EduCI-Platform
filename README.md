@@ -209,10 +209,21 @@ scripts/            Scripts d'initialisation
 docker-compose.yml  Orchestration locale
 ```
 
+## Panel administrateur
+
+Le panel administrateur (accessible via `/admin` après authentification avec un compte ayant le rôle `ROLE_ADMIN`) regroupe les fonctionnalites suivantes :
+
+- **Tableau de bord** : statistiques globales (utilisateurs, conversations, documents indexes) ;
+- **Gestion des utilisateurs** : liste des utilisateurs Keycloak avec leurs rôles et attributs ;
+- **Gestion des leçons** : upload et ingestion de documents pedagogiques (cours, exercices) dans le pipeline RAG.
+
+Le panel s'appuie sur l'API Admin Keycloak et les routes d'administration des microservices (chat-service, ml-service). Pour plus de details, voir [cahier-des-charges-admin.md](cahier-des-charges-admin.md).
+
 ## Etat du projet
 
 Les fondations microservices, l'authentification Keycloak, le gateway, le
-frontend, le chat et le pipeline RAG sont en place. Les evolutions restantes
+frontend, le chat et le pipeline RAG sont en place. Le panel administrateur permet la gestion
+des utilisateurs et du contenu pedagogique. Les evolutions restantes
 incluent notamment l'enrichissement des parcours pedagogiques, les paiements,
 les statistiques d'apprentissage et une future application mobile.
 

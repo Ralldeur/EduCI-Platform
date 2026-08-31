@@ -104,8 +104,8 @@ services:
       KC_DB_PASSWORD: educi_admin_pwd
       KC_HOSTNAME_STRICT: "false"
       KC_HOSTNAME_STRICT_BACKCHANNEL: "false"
-      KC_HOSTNAME_URL: "http://localhost:8080"
-      KC_HOSTNAME_ADMIN_URL: "http://localhost:8080"
+      KC_HOSTNAME_URL: "http://keycloak.local:8080"
+      KC_HOSTNAME_ADMIN_URL: "http://keycloak.local:8080"
       KC_HTTP_ENABLED: "true"
     ports: ["8080:8080"]
     volumes:
@@ -120,7 +120,7 @@ services:
     container_name: educi-gateway
     ports: ["8000:8000"]
     environment:
-      KEYCLOAK_ISSUER: http://localhost:8080/realms/educi
+      KEYCLOAK_ISSUER: http://keycloak.local:8080/realms/educi
       KEYCLOAK_JWKS: http://keycloak:8080/realms/educi/protocol/openid-connect/certs
       AUTH_SERVICE_URL: http://auth-service:8081
       CHAT_SERVICE_URL: http://host.docker.internal:8082
@@ -137,7 +137,7 @@ services:
     ports: ["8081:8081"]
     environment:
       DATABASE_URL: postgresql://educi_admin:educi_admin_pwd@postgres:5432/educi_db
-      KEYCLOAK_ISSUER: http://localhost:8080/realms/educi
+      KEYCLOAK_ISSUER: http://keycloak.local:8080/realms/educi
       KEYCLOAK_JWKS: http://keycloak:8080/realms/educi/protocol/openid-connect/certs
     depends_on:
       postgres: { condition: service_healthy }
@@ -154,7 +154,7 @@ services:
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       OLLAMA_URL: http://ollama:11434
       ML_SERVICE_URL: http://ml-service:8086
-      KEYCLOAK_ISSUER: http://localhost:8080/realms/educi
+      KEYCLOAK_ISSUER: http://keycloak.local:8080/realms/educi
       KEYCLOAK_JWKS: http://keycloak:8080/realms/educi/protocol/openid-connect/certs
     depends_on:
       postgres: { condition: service_healthy }
@@ -197,11 +197,18 @@ services:
       NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-}
       KEYCLOAK_CLIENT_ID: educi-frontend
       KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-}
-      KEYCLOAK_ISSUER: http://localhost:8080/realms/educi
+      KEYCLOAK_ISSUER: http://keycloak.local:8080/realms/educi
+      # Compte de service dédié à l'API Admin Keycloak (page /admin/users),
+      # distinct du client "educi-frontend" ci-dessus — voir
+      # cahier-des-charges-admin.md.
+      KEYCLOAK_ADMIN_CLIENT_ID: educi-admin-service
+      KEYCLOAK_ADMIN_CLIENT_SECRET: ${KEYCLOAK_ADMIN_CLIENT_SECRET:-}
     depends_on:
       gateway: { condition: service_started }
     restart: unless-stopped
     networks: [educi-net]
+    extra_hosts:
+      - "keycloak.local:host-gateway"
 
   # Crée la collection Qdrant + ingère BDD/ (contenu curriculaire) au démarrage.
   # No-op tant que ml-service n'a pas d'endpoint d'ingestion réel (Phase 3).

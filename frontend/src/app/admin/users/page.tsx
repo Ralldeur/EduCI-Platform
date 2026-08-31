@@ -2,16 +2,24 @@
 
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
+import { getGradeLevelLabel } from "@/lib/utils";
 
 interface UserInfo {
   id: string;
+  username: string;
   name: string | null;
-  email: string;
-  role: string;
+  email: string | null;
+  roles: string[];
   gradeLevel: string | null;
-  createdAt: string;
-  _count: { conversations: number };
+  bacSeries: string | null;
+  createdAt: string | null;
 }
+
+const ROLE_STYLES: Record<string, string> = {
+  ROLE_ADMIN: "bg-purple-500/10 text-purple-500",
+  ROLE_TEACHER: "bg-orange-500/10 text-orange-500",
+  ROLE_STUDENT: "bg-blue-500/10 text-blue-500",
+};
 
 export default function AdminUsersPage() {
   const [users, setUsers] = useState<UserInfo[]>([]);
@@ -44,34 +52,37 @@ export default function AdminUsersPage() {
               <tr className="border-b border-[var(--color-border)] bg-[var(--color-surface-hover)]">
                 <th className="text-left px-4 py-3 font-medium">Nom</th>
                 <th className="text-left px-4 py-3 font-medium">Email</th>
-                <th className="text-left px-4 py-3 font-medium">Rôle</th>
-                <th className="text-left px-4 py-3 font-medium">Niveau</th>
-                <th className="text-left px-4 py-3 font-medium">Conversations</th>
+                <th className="text-left px-4 py-3 font-medium">Rôles</th>
+                <th className="text-left px-4 py-3 font-medium">Niveau / Série</th>
                 <th className="text-left px-4 py-3 font-medium">Inscrit le</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--color-border)]">
               {users.map((user) => (
                 <tr key={user.id} className="hover:bg-[var(--color-surface-hover)]">
-                  <td className="px-4 py-3">{user.name ?? "—"}</td>
-                  <td className="px-4 py-3 text-[var(--color-muted)]">
-                    {user.email}
+                  <td className="px-4 py-3">{user.name ?? user.username}</td>
+                  <td className="px-4 py-3 text-[var(--color-muted)]">{user.email ?? "—"}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex flex-wrap gap-1">
+                      {user.roles.length === 0 && <span className="text-[var(--color-muted)]">—</span>}
+                      {user.roles.map((role) => (
+                        <span
+                          key={role}
+                          className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                            ROLE_STYLES[role] ?? "bg-gray-500/10 text-gray-500"
+                          }`}
+                        >
+                          {role}
+                        </span>
+                      ))}
+                    </div>
                   </td>
                   <td className="px-4 py-3">
-                    <span
-                      className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                        user.role === "ADMIN"
-                          ? "bg-purple-500/10 text-purple-500"
-                          : "bg-blue-500/10 text-blue-500"
-                      }`}
-                    >
-                      {user.role}
-                    </span>
+                    {user.gradeLevel ? getGradeLevelLabel(user.gradeLevel) : "—"}
+                    {user.bacSeries ? ` (Série ${user.bacSeries})` : ""}
                   </td>
-                  <td className="px-4 py-3">{user.gradeLevel ?? "—"}</td>
-                  <td className="px-4 py-3">{user._count.conversations}</td>
                   <td className="px-4 py-3 text-[var(--color-muted)]">
-                    {new Date(user.createdAt).toLocaleDateString("fr-FR")}
+                    {user.createdAt ? new Date(user.createdAt).toLocaleDateString("fr-FR") : "—"}
                   </td>
                 </tr>
               ))}
