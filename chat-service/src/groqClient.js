@@ -15,6 +15,12 @@ const SAFETY_MARGIN = 500;
 // une requête presque garantie de retomber sur le bug "raisonnement caché
 // consomme tout le budget → réponse vide" (voir groqClient.js plus bas).
 const MIN_MAX_TOKENS = 2500;
+// Plancher plus bas utilisable uniquement quand reasoning_effort="none" :
+// sans raisonnement caché à financer, tout le budget va à la sortie
+// visible, donc un budget restreint reste exploitable (voir l'approche en
+// deux appels de /exercises/generate et /exercises/correct dans index.js —
+// le second appel, rédaction seule, peut se contenter de ce plancher).
+const MIN_MAX_TOKENS_NO_REASONING = 800;
 
 // Estimation grossière (~3 caractères/token). Mesuré le 31/08 sur ce
 // contenu (français pédagogique + programme scolaire ivoirien) : le
@@ -48,7 +54,7 @@ function estimatePromptTokens(messages) {
  * 413 brut, si même le plancher MIN_MAX_TOKENS ferait dépasser TPM_LIMIT —
  * ça peut arriver sur une conversation avec beaucoup d'historique.
  */
-function computeMaxTokens(messages, desiredMaxTokens) {
+function computeMaxTokens(messages, desiredMaxTokens, minMaxTokens = MIN_MAX_TOKENS) {
   const promptTokens = estimatePromptTokens(messages);
   const available = TPM_LIMIT - promptTokens - SAFETY_MARGIN;
   const finalMaxTokens = Math.min(desiredMaxTokens, available);
@@ -60,9 +66,9 @@ function computeMaxTokens(messages, desiredMaxTokens) {
     `[chat-service] budget Groq: promptEstimé=${promptTokens} maxTokens=${finalMaxTokens} totalEstimé=${promptTokens + finalMaxTokens}`
   );
 
-  if (available < MIN_MAX_TOKENS) {
+  if (available < minMaxTokens) {
     const err = new Error(
-      `prompt estimé à ${promptTokens} tokens, budget restant ${available} < minimum ${MIN_MAX_TOKENS} (plafond TPM ${TPM_LIMIT})`
+      `prompt estimé à ${promptTokens} tokens, budget restant ${available} < minimum ${minMaxTokens} (plafond TPM ${TPM_LIMIT})`
     );
     err.code = "PROMPT_TOO_LARGE";
     throw err;
@@ -135,10 +141,29 @@ export async function streamAIResponse(messages, { temperature = 0.7, maxTokens 
  * Retourne directement le texte JSON brut (à parser par l'appelant), pas
  * un objet déjà parsé, pour rester symétrique avec generateAIResponse du
  * monolithe d'origine.
+ *
+ * reasoningEffort ("default" ou "none", seules valeurs acceptées par Qwen3)
+ * est pilotable par l'appelant plutôt que fixé en dur, pour permettre
+ * l'approche en deux appels utilisée par /exercises/generate et
+ * /exercises/correct (voir index.js) :
+ *  - "default" : raisonnement interne actif, utile pour un appel de
+ *    vérification silencieuse dont la sortie visible attendue est courte
+ *    (le budget max_tokens sert surtout au raisonnement caché).
+ *  - "none" : pas de raisonnement caché, tout le budget max_tokens va à la
+ *    sortie visible — utilisé pour l'appel de rédaction finale, une fois
+ *    les paramètres déjà vérifiés par le premier appel, qui n'a donc plus
+ *    besoin de re-vérifier la cohérence en interne.
+ * Le plancher de budget appliqué par computeMaxTokens est plus bas pour
+ * "none" (MIN_MAX_TOKENS_NO_REASONING) puisqu'il n'y a pas de raisonnement
+ * caché à financer avant la sortie visible.
  */
-export async function generateJSON(messages, { temperature = 0.7, maxTokens = 6000 } = {}) {
+export async function generateJSON(
+  messages,
+  { temperature = 0.7, maxTokens = 6000, reasoningEffort = "default" } = {}
+) {
   const client = getGroqClient();
-  const finalMaxTokens = computeMaxTokens(messages, maxTokens);
+  const minMaxTokens = reasoningEffort === "none" ? MIN_MAX_TOKENS_NO_REASONING : MIN_MAX_TOKENS;
+  const finalMaxTokens = computeMaxTokens(messages, maxTokens, minMaxTokens);
 
   const completion = await client.chat.completions.create({
     model: "qwen/qwen3.6-27b",
@@ -148,7 +173,7 @@ export async function generateJSON(messages, { temperature = 0.7, maxTokens = 60
     stream: false,
     response_format: { type: "json_object" },
     reasoning_format: "hidden",
-    reasoning_effort: "default",
+    reasoning_effort: reasoningEffort,
   });
 
   return completion.choices[0]?.message?.content ?? "";

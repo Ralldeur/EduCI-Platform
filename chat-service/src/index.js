@@ -291,8 +291,9 @@ app.post("/exercises/generate", async (req, res) => {
   const curriculumBlock = buildCurriculumContext(gradeLevel, subject, serie);
   const exam = IVORIAN_EXAMS[getCycle(gradeLevel)];
   const typeInstruction = EXERCISE_TYPE_INSTRUCTIONS[type ?? "OPEN"] ?? EXERCISE_TYPE_INSTRUCTIONS.OPEN;
+  const exerciseCount = count ?? 3;
 
-  const prompt = `Génère ${count ?? 3} exercices de ${subject} pour un élève de ${gradeLevel} en Côte d'Ivoire.
+  const sharedContext = `Génère ${exerciseCount} exercices de ${subject} pour un élève de ${gradeLevel} en Côte d'Ivoire.
 ${topic ? `Sujet spécifique : ${topic}` : ""}
 Difficulté : ${difficulty ?? "MEDIUM"}
 Type : ${typeInstruction}
@@ -304,8 +305,72 @@ ${curriculumBlock}
 Contraintes :
 - Reste STRICTEMENT dans le programme ivoirien ci-dessus pour ce niveau (pas de notions hors-programme).
 - Ancre les énoncés dans le contexte ivoirien (FCFA, villes ivoiriennes, cacao/café, prénoms locaux) ; n'utilise jamais l'euro ni le dollar.
-- Inspire-toi du format de l'examen national : ${exam.name} (${exam.full}).
-- RÈGLE DE COHÉRENCE NUMÉRIQUE : avant de finaliser ta réponse, si elle implique une équation, une racine, ou une propriété numérique à vérifier, assure-toi en interne (silencieusement) que les valeurs choisies donnent un résultat exact et simple (entier ou fraction simple), adapté au niveau de l'élève. Si un premier jeu de paramètres ne donne pas un résultat propre, choisis-en un autre et recommence — SANS JAMAIS montrer tes tentatives, hésitations, ou corrections à l'élève. La réponse finale doit se présenter comme si elle avait été correcte du premier coup : aucune trace visible de mots comme « attends », « réexaminons », « en fait », « pour simplifier », ou toute autre marque de raisonnement de repli.${ragBlock}
+- Inspire-toi du format de l'examen national : ${exam.name} (${exam.full}).${ragBlock}`;
+
+  // --- Étape 1/2 : vérification silencieuse des paramètres numériques ---
+  // Appel court en sortie visible (juste les paramètres validés en JSON
+  // compact), mais avec reasoning_effort "default". maxTokens: 100000 est
+  // délibérément surdimensionné — computeMaxTokens() (groqClient.js) le
+  // ramène de toute façon à tout ce qu'il reste de budget TPM après le
+  // prompt, ce qui donne au raisonnement caché la place maximale possible
+  // pour vérifier/ajuster les valeurs (ex. équation f(x)=0 avec solution
+  // simple) sans risquer de le couper avant qu'il produise le JSON final
+  // (observé avec un plafond de 4000 : le raisonnement consommait tout le
+  // budget et la génération échouait avec failed_generation vide).
+  const verifyPrompt = `${sharedContext}
+
+Tâche : NE RÉDIGE AUCUN énoncé. Pour chacun des ${exerciseCount} exercices à venir, détermine et VÉRIFIE en interne les paramètres numériques nécessaires : si un exercice implique une équation, une racine, ou tout résultat calculable, choisis des valeurs qui donnent un résultat exact et simple (entier ou fraction simple) adapté au niveau ${gradeLevel}. Si un premier jeu de valeurs ne convient pas, corrige-le en interne avant de répondre — sans que cette étape n'apparaisse nulle part.
+
+Réponds UNIQUEMENT avec ce JSON compact (pas d'énoncé rédigé, pas d'explication) :
+{
+  "plans": [
+    { "idea": "angle/sujet précis de l'exercice", "params": "paramètres numériques validés (équation, valeurs, résultat attendu)" }
+  ]
+}`;
+
+  let rawPlans;
+  try {
+    rawPlans = await generateJSON(
+      [
+        {
+          role: "system",
+          content:
+            "Tu prépares en silence les paramètres numériques d'exercices pour le programme scolaire ivoirien. Réponds uniquement en JSON compact, sans énoncé rédigé.",
+        },
+        { role: "user", content: verifyPrompt },
+      ],
+      { maxTokens: 100000, reasoningEffort: "default" }
+    );
+  } catch (err) {
+    return sendGroqError(res, err, "vérification paramètres exercices");
+  }
+
+  // Best-effort : si l'étape de vérification ne renvoie pas un JSON
+  // exploitable, on continue sans paramètres pré-validés plutôt que
+  // d'échouer toute la requête — l'étape de rédaction reste fonctionnelle,
+  // juste sans le bénéfice de la vérification silencieuse.
+  let plans = [];
+  try {
+    plans = JSON.parse(rawPlans)?.plans ?? [];
+  } catch (err) {
+    console.error("[chat-service] réponse IA non-JSON pour la vérification exercices:", rawPlans);
+  }
+
+  // --- Étape 2/2 : rédaction finale à partir des paramètres validés ---
+  // reasoning_effort "none" : plus besoin de re-vérifier la cohérence
+  // numérique (déjà fait à l'étape 1), tout le budget va à la sortie
+  // visible — appel rapide et prévisible.
+  const plansBlock =
+    plans.length > 0
+      ? `\n\nParamètres déjà vérifiés à utiliser tels quels (ne les recalcule pas) :\n${plans
+          .map((p, i) => `${i + 1}. ${p.idea} — ${p.params}`)
+          .join("\n")}`
+      : "";
+
+  const draftPrompt = `${sharedContext}${plansBlock}
+
+Rédige maintenant les ${exerciseCount} exercices complets (énoncé + réponse + explication) à partir des paramètres ci-dessus déjà validés — ne les remets pas en question, contente-toi de rédiger proprement.
+Pour tout calcul annexe non couvert par ces paramètres (limite, dérivée, signe, etc.), rédige-le directement, sans hésitation ni retour en arrière visible : jamais de mots ou tournures comme « attends », « en fait », « non, mieux », « réexaminons », « pour simplifier », ou toute autre trace de tâtonnement. La correction doit se lire comme si elle avait été juste du premier coup.
 
 Réponds en JSON avec le format suivant :
 {
@@ -322,13 +387,16 @@ Réponds en JSON avec le format suivant :
 
   let raw;
   try {
-    raw = await generateJSON([
-      {
-        role: "system",
-        content: "Tu es un générateur d'exercices pour le programme scolaire ivoirien. Réponds uniquement en JSON valide.",
-      },
-      { role: "user", content: prompt },
-    ]);
+    raw = await generateJSON(
+      [
+        {
+          role: "system",
+          content: "Tu es un générateur d'exercices pour le programme scolaire ivoirien. Réponds uniquement en JSON valide.",
+        },
+        { role: "user", content: draftPrompt },
+      ],
+      { maxTokens: 6000, reasoningEffort: "none" }
+    );
   } catch (err) {
     return sendGroqError(res, err, "génération exercices");
   }
@@ -351,18 +419,73 @@ app.post("/exercises/correct", async (req, res) => {
     return res.status(400).json({ error: "Question et réponse de l'élève requises" });
   }
 
-  const prompt = `Corrige la réponse de cet élève de ${gradeLevel ?? "niveau non précisé"} en ${subject ?? "matière non précisée"}.
+  const sharedContext = `Niveau : ${gradeLevel ?? "niveau non précisé"}
+Matière : ${subject ?? "matière non précisée"}
 
 Question : ${question}
 ${correctAnswer ? `Réponse attendue : ${correctAnswer}` : ""}
-Réponse de l'élève : ${studentAnswer}
+Réponse de l'élève : ${studentAnswer}`;
 
-Donne :
-1. Une note sur 20
+  // --- Étape 1/2 : vérification silencieuse de la note et du calcul ---
+  // Même logique que pour /exercises/generate (voir plus haut) : sortie
+  // visible courte attendue, mais reasoning_effort "default" et un budget
+  // max_tokens généreux pour laisser au raisonnement caché la place de
+  // vérifier/recalculer la méthode correcte avant de trancher la note.
+  const verifyPrompt = `${sharedContext}
+
+Tâche : NE RÉDIGE PAS le feedback complet. Détermine et VÉRIFIE en interne la note exacte sur 20 selon le barème ivoirien (APC), ainsi que le résultat/la méthode corrects étape par étape si un calcul ou une résolution est en jeu. Si un premier calcul te semble incohérent, recorrige-le en interne avant de répondre — sans que cette étape n'apparaisse nulle part.
+
+Réponds UNIQUEMENT avec ce JSON compact (pas de rédaction complète) :
+{
+  "score": 15,
+  "keyFacts": "résultat/méthode corrects validés, et liste brève des erreurs précises de l'élève à mentionner"
+}`;
+
+  let rawVerification;
+  try {
+    rawVerification = await generateJSON(
+      [
+        {
+          role: "system",
+          content:
+            "Tu prépares en silence l'évaluation d'une copie d'élève ivoirien (programme MENA/DPFC, APC). Réponds uniquement en JSON compact, sans rédaction complète.",
+        },
+        { role: "user", content: verifyPrompt },
+      ],
+      { maxTokens: 100000, reasoningEffort: "default" }
+    );
+  } catch (err) {
+    return sendGroqError(res, err, "vérification correction exercice");
+  }
+
+  // Best-effort, comme pour /exercises/generate : une vérification non
+  // exploitable ne bloque pas la rédaction du feedback, juste sans le
+  // bénéfice de la note/méthode déjà validées.
+  let verification = {};
+  try {
+    verification = JSON.parse(rawVerification) ?? {};
+  } catch (err) {
+    console.error("[chat-service] réponse IA non-JSON pour la vérification correction:", rawVerification);
+  }
+
+  // --- Étape 2/2 : rédaction finale du feedback ---
+  // reasoning_effort "none" : la note et la méthode sont déjà validées à
+  // l'étape 1, il ne reste qu'à rédiger proprement.
+  const verificationBlock =
+    verification.score != null || verification.keyFacts
+      ? `\n\nÉvaluation déjà vérifiée à utiliser telle quelle (ne la recalcule pas) :\n- Note validée : ${verification.score ?? "?"}/20\n- Éléments validés : ${verification.keyFacts ?? "aucun"}`
+      : "";
+
+  const draftPrompt = `${sharedContext}${verificationBlock}
+
+Rédige maintenant le feedback complet à partir de l'évaluation ci-dessus déjà validée — ne la remets pas en question, contente-toi de rédiger proprement :
+1. La note sur 20 (déjà validée ci-dessus)
 2. Les points positifs
 3. Les erreurs identifiées
 4. La correction détaillée étape par étape
 5. Des conseils pour s'améliorer
+
+Pour tout calcul annexe de la correction non couvert par l'évaluation ci-dessus, rédige-le directement, sans hésitation ni retour en arrière visible : jamais de mots ou tournures comme « attends », « en fait », « non, mieux », « réexaminons », « pour simplifier », ou toute autre trace de tâtonnement. La correction doit se lire comme si elle avait été juste du premier coup.
 
 Réponds en JSON avec le format :
 {
@@ -383,9 +506,9 @@ Réponds en JSON avec le format :
           content:
             "Tu es un correcteur pédagogique bienveillant pour le programme scolaire ivoirien (MENA/DPFC, Approche Par les Compétences). Note sur 20 selon le barème ivoirien, emploie le vocabulaire APC et des exemples ancrés en Côte d'Ivoire (FCFA, villes ivoiriennes). Réponds uniquement en JSON valide.",
         },
-        { role: "user", content: prompt },
+        { role: "user", content: draftPrompt },
       ],
-      { temperature: 0.5 }
+      { temperature: 0.5, maxTokens: 6000, reasoningEffort: "none" }
     );
   } catch (err) {
     return sendGroqError(res, err, "correction exercice");
