@@ -12,7 +12,7 @@ const ML_SERVICE_URL = process.env.ML_SERVICE_URL || "http://ml-service:8086";
  *
  * @param {string} query - la question ou le sujet recherché
  * @param {object} options
- * @param {string} [options.subject] - ex. "maths"
+ * @param {string} [options.subject] - slug du programme, ex. "mathematiques" (voir SUBJECT_LABELS dans frontend/src/lib/curriculum.ts — le filtre Qdrant est un match exact, tout autre slug ne retrouve rien)
  * @param {string} [options.gradeLevel] - ex. "Terminale D"
  * @param {"cours"|"exercice"} [options.docType]
  * @param {number} [options.topK=5]

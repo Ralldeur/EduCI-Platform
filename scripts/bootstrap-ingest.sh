@@ -10,11 +10,19 @@
 #
 # Convention attendue pour /BDD (à monter en volume, voir docker-compose.yml) :
 #   BDD/
-#     maths/
+#     mathematiques/
 #       cours/limites-continuite.pdf
 #       exercices/limites-continuite-exercices.pdf
 #     physique-chimie/
 #       cours/...
+# IMPORTANT : le nom du dossier <matière> devient tel quel le champ "subject"
+# indexé dans Qdrant (ingestion) ET doit donc être identique au slug utilisé
+# côté frontend (voir SUBJECT_LABELS dans frontend/src/lib/curriculum.ts :
+# "mathematiques", "francais", "physique-chimie", "svt",
+# "histoire-geographie", "philosophie", "anglais") — sinon le filtre Qdrant
+# (match exact, voir ml-service/rag/pipeline.py::search) ne retrouve jamais
+# le contenu ingéré en usage réel (observé le 31/08 avec un dossier "maths/"
+# au lieu de "mathematiques/").
 # ============================================================================
 set -u
 
