@@ -7,6 +7,7 @@ import ChatInput from "@/components/chat/ChatInput";
 import ModeSelector from "@/components/chat/ModeSelector";
 import { GraduationCap, Loader2 } from "lucide-react";
 import toast from "react-hot-toast";
+import { normalizeGradeLevel } from "@/lib/utils";
 import type { ChatMessage as ChatMessageType } from "@/types";
 
 export default function ConversationPage() {
@@ -40,7 +41,11 @@ export default function ConversationPage() {
           const data = await res.json();
           setMessages(data.messages ?? []);
           setSubject(data.subject ?? "");
-          setGradeLevel(data.gradeLevel ?? "");
+          // Défensif : certaines conversations existantes ont pu être créées
+          // avant la normalisation (gradeLevel stocké en texte libre style
+          // "Terminale D" plutôt qu'en code abrégé "TLE") — voir
+          // normalizeGradeLevel() dans lib/utils.ts.
+          setGradeLevel(normalizeGradeLevel(data.gradeLevel));
           setSerie(data.serie ?? "");
           setConvMode(data.mode ?? "CHAT");
         }

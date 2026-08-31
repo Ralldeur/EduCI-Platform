@@ -7,6 +7,7 @@ import { usePathname } from "next/navigation";
 import ChatSidebar from "@/components/chat/ChatSidebar";
 import { GraduationCap } from "lucide-react";
 import toast from "react-hot-toast";
+import { normalizeGradeLevel } from "@/lib/utils";
 import type { ConversationSummary, ConversationMode } from "@/types";
 
 export default function ChatLayout({
@@ -60,7 +61,12 @@ export default function ChatLayout({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           mode,
-          gradeLevel: session?.user?.gradeLevel,
+          // session.user.gradeLevel vient de l'attribut Keycloak
+          // "grade_level" en texte libre (ex. "Terminale D") — à normaliser
+          // vers le code abrégé ("TLE") attendu par ModeSelector/GRADE_LEVELS,
+          // sans quoi le sélecteur de niveau démarre sans option sélectionnée
+          // et le sélecteur de série BAC (isLycee) reste caché.
+          gradeLevel: normalizeGradeLevel(session?.user?.gradeLevel),
         }),
       });
 
