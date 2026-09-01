@@ -48,7 +48,15 @@ class RagPipeline:
     def chunk(text: str, size: int = 800, overlap: int = 100) -> list[str]:
         """Découpage simple par paragraphes, regroupés jusqu'à ~`size`
         caractères avec un peu de recouvrement pour ne pas couper le
-        contexte pile à la frontière d'un chunk."""
+        contexte pile à la frontière d'un chunk.
+
+        Normalise d'abord les fins de ligne (\\r\\n, \\r isolé) vers \\n :
+        un .txt/.md édité sous Windows utilise \\r\\n\\r\\n entre paragraphes,
+        qui ne matche jamais le séparateur "\\n\\n" ci-dessous — sans cette
+        normalisation, tout le texte reste un seul "paragraphe" et donc un
+        seul chunk unique (parfois énorme), au lieu d'être découpé
+        finement (observé sur les fichiers seed BDD/, qui sont en CRLF)."""
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
         paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
         chunks: list[str] = []
         current = ""

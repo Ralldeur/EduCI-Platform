@@ -53,7 +53,20 @@ async def ingest_lesson(
         raise HTTPException(400, f"docType doit être 'cours' ou 'exercice', reçu: {docType!r}")
 
     content = await file.read()
-    text = extract_text(file.filename, content)
+    try:
+        text = extract_text(file.filename, content)
+    except Exception:
+        # pypdf/python-docx lèvent des exceptions très variées (xref
+        # corrompu, fichier vide, zip invalide...) sur un fichier
+        # illisible — PDF/DOCX corrompu, tronqué (upload interrompu), ou
+        # simplement mal nommé (ex. un .txt renommé en .pdf par erreur).
+        # Sans ce garde-fou, n'importe lequel de ces cas très réalistes
+        # remontait en 500 brute avec stack trace, au lieu du même 422
+        # clair que le cas ".txt vide" ci-dessous gère déjà.
+        raise HTTPException(
+            422,
+            f"Impossible de lire {file.filename} — vérifiez qu'il n'est pas corrompu ou tronqué",
+        )
     if not text.strip():
         raise HTTPException(422, f"Aucun texte extrait de {file.filename}")
 
