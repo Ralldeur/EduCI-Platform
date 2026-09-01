@@ -139,6 +139,25 @@ app.patch("/conversations/:id", async (req, res) => {
   res.json(result.rows[0]);
 });
 
+// Suppression d'une conversation (et de ses messages, via ON DELETE CASCADE
+// sur chat_messages.conversation_id — voir db.js). Réservée au propriétaire
+// de la conversation, comme GET/PATCH ci-dessus.
+app.delete("/conversations/:id", async (req, res) => {
+  const { userId } = identity(req);
+  if (!userId) return res.status(401).json({ error: "Non authentifié" });
+
+  const result = await pool.query(
+    "DELETE FROM chat_conversations WHERE id = $1 AND user_id = $2 RETURNING id",
+    [req.params.id, userId]
+  );
+
+  if (result.rows.length === 0) {
+    return res.status(404).json({ error: "Conversation introuvable" });
+  }
+
+  res.status(204).end();
+});
+
 // --- Chat --------------------------------------------------------------
 
 app.post("/chat", async (req, res) => {

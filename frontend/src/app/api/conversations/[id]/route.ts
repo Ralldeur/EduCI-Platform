@@ -91,3 +91,22 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const row: ConversationDetailRow = await res.json();
   return NextResponse.json(toConversation({ ...row, messages: [] }));
 }
+
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const accessToken = await getAccessToken(req);
+  if (!accessToken) {
+    return NextResponse.json({ error: "Non authentifié" }, { status: 401 });
+  }
+
+  const res = await fetch(`${GATEWAY_URL}/api/chat/conversations/${id}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (!res.ok) {
+    return NextResponse.json({ error: "Conversation introuvable" }, { status: res.status });
+  }
+
+  return new NextResponse(null, { status: 204 });
+}
