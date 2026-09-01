@@ -84,6 +84,34 @@ async def ingest_lesson(
     return {"file": file.filename, "docType": docType, "chunksIngested": chunks_ingested}
 
 
+@app.get("/lessons")
+def list_lessons():
+    """Documents ingérés dans le RAG, groupés par fichier source (voir
+    RagPipeline.list_documents) — pour l'écran /admin/lessons."""
+    return {"documents": pipeline.list_documents()}
+
+
+@app.delete("/lessons/by-source/{source}")
+def delete_lesson_by_source(source: str):
+    """Supprime tous les chunks d'un document ingéré, identifié par son nom
+    de fichier (`source`). C'est l'action déclenchée par le bouton
+    supprimer de la liste des documents dans /admin/lessons."""
+    deleted = pipeline.delete_by_source(source)
+    if deleted == 0:
+        raise HTTPException(404, f"Aucun document trouvé pour la source {source!r}")
+    return {"source": source, "chunksDeleted": deleted}
+
+
+@app.delete("/lessons/by-id/{point_id}")
+def delete_lesson_by_id(point_id: str):
+    """Repli minimal : supprime un unique chunk/point par son id Qdrant,
+    pour le cas où il faut retirer un point précis en dehors de la
+    suppression groupée par document."""
+    if not pipeline.delete_by_id(point_id):
+        raise HTTPException(404, f"Aucun point trouvé pour l'id {point_id!r}")
+    return {"id": point_id, "deleted": True}
+
+
 class SearchRequest(BaseModel):
     query: str
     subject: str | None = None

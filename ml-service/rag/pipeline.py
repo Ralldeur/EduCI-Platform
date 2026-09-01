@@ -35,6 +35,73 @@ class RagPipeline:
     def count_documents(self) -> int:
         return self.qdrant.get_collection(COLLECTION).points_count
 
+    def list_documents(self) -> list[dict]:
+        """Liste les documents ingérés, groupés par `source` (nom de
+        fichier) puisqu'un document est éclaté en plusieurs chunks/points à
+        l'ingestion (voir `ingest`). Pagine via `scroll` pour couvrir toute
+        la collection, pas seulement les premiers points."""
+        by_source: dict[str, dict] = {}
+        offset = None
+        while True:
+            points, offset = self.qdrant.scroll(
+                collection_name=COLLECTION,
+                limit=256,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+            for p in points:
+                source = p.payload.get("source", "") or p.id
+                if source not in by_source:
+                    by_source[source] = {
+                        "source": source,
+                        "title": p.payload.get("title", source),
+                        "subject": p.payload.get("subject", ""),
+                        "gradeLevel": p.payload.get("gradeLevel", ""),
+                        "docType": p.payload.get("docType", ""),
+                        "chunksCount": 0,
+                    }
+                by_source[source]["chunksCount"] += 1
+            if offset is None:
+                break
+
+        return sorted(by_source.values(), key=lambda d: d["title"])
+
+    def delete_by_source(self, source: str) -> int:
+        """Supprime tous les chunks/points d'un document ingéré, identifié
+        par son `source` (nom de fichier à l'ingestion)."""
+        count_before = self.qdrant.count(
+            collection_name=COLLECTION,
+            count_filter=qm.Filter(
+                must=[qm.FieldCondition(key="source", match=qm.MatchValue(value=source))]
+            ),
+        ).count
+
+        if count_before > 0:
+            self.qdrant.delete(
+                collection_name=COLLECTION,
+                points_selector=qm.FilterSelector(
+                    filter=qm.Filter(
+                        must=[qm.FieldCondition(key="source", match=qm.MatchValue(value=source))]
+                    )
+                ),
+            )
+
+        return count_before
+
+    def delete_by_id(self, point_id: str) -> bool:
+        """Supprime un unique point par son id — repli minimal quand un
+        document n'a pas de `source` exploitable."""
+        existing = self.qdrant.retrieve(collection_name=COLLECTION, ids=[point_id])
+        if not existing:
+            return False
+
+        self.qdrant.delete(
+            collection_name=COLLECTION,
+            points_selector=qm.PointIdsList(points=[point_id]),
+        )
+        return True
+
     def embed(self, text: str) -> list[float]:
         with httpx.Client(timeout=60) as client:
             r = client.post(

@@ -8,6 +8,24 @@ import { requireAdmin } from "@/lib/auth";
 // lui-même l'en-tête Content-Type (boundary compris).
 const GATEWAY_URL = process.env.GATEWAY_URL || "http://gateway:8000";
 
+export async function GET(req: NextRequest) {
+  const admin = await requireAdmin(req);
+  if ("error" in admin) {
+    return NextResponse.json({ error: admin.error }, { status: admin.status });
+  }
+
+  const res = await fetch(`${GATEWAY_URL}/api/ml/lessons`, {
+    headers: { Authorization: `Bearer ${admin.accessToken}` },
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    return NextResponse.json({ error: "Erreur lors du chargement des documents" }, { status: res.status });
+  }
+
+  return NextResponse.json(data.documents ?? []);
+}
+
 export async function POST(req: NextRequest) {
   const admin = await requireAdmin(req);
   if ("error" in admin) {
