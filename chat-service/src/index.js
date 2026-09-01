@@ -317,16 +317,36 @@ Contraintes :
   // simple) sans risquer de le couper avant qu'il produise le JSON final
   // (observé avec un plafond de 4000 : le raisonnement consommait tout le
   // budget et la génération échouait avec failed_generation vide).
+  // Le prompt liste des étapes de calcul explicites (pas juste "vérifie en
+  // interne") car un modèle peut "penser" avoir vérifié sans avoir réellement
+  // recalculé — il choisit des paramètres qui ONT L'AIR cohérents sans que le
+  // calcul soit fait, et l'étape 2 ("ne les remets pas en question") propage
+  // l'erreur sans jamais la détecter (cas observé : étude de fonction où la
+  // valeur annoncée dans l'énoncé ne correspondait pas à la vraie image par
+  // la fonction proposée). D'où l'exigence d'un calcul explicite valeur par
+  // valeur, comparé à ce qui sera annoncé, avant de renvoyer le JSON.
   const verifyPrompt = `${sharedContext}
 
-Tâche : NE RÉDIGE AUCUN énoncé. Pour chacun des ${exerciseCount} exercices à venir, détermine et VÉRIFIE en interne les paramètres numériques nécessaires : si un exercice implique une équation, une racine, ou tout résultat calculable, choisis des valeurs qui donnent un résultat exact et simple (entier ou fraction simple) adapté au niveau ${gradeLevel}. Si un premier jeu de valeurs ne convient pas, corrige-le en interne avant de répondre — sans que cette étape n'apparaisse nulle part.
+Tâche : NE RÉDIGE AUCUN énoncé. Pour chacun des ${exerciseCount} exercices à venir :
+1. Choisis la fonction/l'équation et les paramètres numériques (coefficients, bornes, etc.) adaptés au niveau ${gradeLevel}.
+2. Liste les valeurs clés que l'énoncé va annoncer à l'élève (ex. image d'un point par la fonction, racine d'une équation, limite, résultat d'un calcul).
+3. Calcule explicitement chacune de ces valeurs à partir des paramètres choisis (ex. remplace x par chaque valeur dans l'expression de f(x) et effectue le calcul complet jusqu'au résultat final).
+4. Compare chaque résultat obtenu à l'étape 3 à ce que tu comptes annoncer dans l'énoncé. S'il y a le moindre écart, corrige les paramètres et RECOMMENCE le calcul depuis l'étape 3 — ne passe à l'exercice suivant qu'une fois chaque valeur confirmée exacte.
+5. Privilégie des résultats exacts et simples (entier ou fraction simple) adaptés au niveau ${gradeLevel}.
+
+Ce raisonnement (étapes 1 à 4) doit rester interne — n'expose jamais le détail des calculs dans le JSON final, seulement les résultats.
 
 Réponds UNIQUEMENT avec ce JSON compact (pas d'énoncé rédigé, pas d'explication) :
 {
   "plans": [
-    { "idea": "angle/sujet précis de l'exercice", "params": "paramètres numériques validés (équation, valeurs, résultat attendu)" }
+    {
+      "idea": "angle/sujet précis de l'exercice",
+      "params": "paramètres numériques validés (équation, valeurs, résultat attendu)",
+      "verification": { "expression calculée (ex. f(2))": "valeur exacte obtenue au calcul" }
+    }
   ]
-}`;
+}
+Le champ "verification" doit contenir CHAQUE valeur calculée à l'étape 3, avec exactement la même valeur que celle qui apparaîtra dans l'énoncé final — ces valeurs serviront de référence pour l'étape de rédaction.`;
 
   let rawPlans;
   try {
@@ -360,10 +380,22 @@ Réponds UNIQUEMENT avec ce JSON compact (pas d'énoncé rédigé, pas d'explica
   // reasoning_effort "none" : plus besoin de re-vérifier la cohérence
   // numérique (déjà fait à l'étape 1), tout le budget va à la sortie
   // visible — appel rapide et prévisible.
+  // On répercute les valeurs de "verification" (étape 1) dans le prompt de
+  // rédaction : elles ancrent explicitement les chiffres que l'énoncé et la
+  // correction doivent annoncer, plutôt que de laisser l'étape 2 les
+  // redéduire (et potentiellement diverger) à partir de "params" seul.
   const plansBlock =
     plans.length > 0
       ? `\n\nParamètres déjà vérifiés à utiliser tels quels (ne les recalcule pas) :\n${plans
-          .map((p, i) => `${i + 1}. ${p.idea} — ${p.params}`)
+          .map((p, i) => {
+            const verif =
+              p.verification && typeof p.verification === "object" && !Array.isArray(p.verification)
+                ? ` [valeurs vérifiées à annoncer telles quelles : ${Object.entries(p.verification)
+                    .map(([k, v]) => `${k} = ${v}`)
+                    .join(", ")}]`
+                : "";
+            return `${i + 1}. ${p.idea} — ${p.params}${verif}`;
+          })
           .join("\n")}`
       : "";
 
