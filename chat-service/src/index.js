@@ -575,11 +575,23 @@ Réponds en JSON avec le format :
 });
 
 // --- Admin --------------------------------------------------------------
-// Pas de vérification ROLE_ADMIN ici : comme pour le reste des routes de
-// chat-service, l'autorisation est décidée en amont par le frontend (voir
-// frontend/src/lib/auth.ts::requireAdmin) avant même d'appeler le gateway —
-// même convention que /conversations (qui ne vérifie pas non plus de rôle,
-// seulement l'identité via x-user-id).
+// /admin/stats : pas de vérification ROLE_ADMIN ici, comme pour le reste des
+// routes "propriétaire" de chat-service — l'autorisation est décidée en
+// amont par le frontend (voir frontend/src/lib/auth.ts::requireAdmin) avant
+// même d'appeler le gateway, même convention que /conversations (qui ne
+// vérifie pas non plus de rôle, seulement l'identité via x-user-id).
+//
+// /admin/conversations* en revanche donnent accès aux conversations de
+// N'IMPORTE QUEL utilisateur (pas de filtre user_id) : une vérification
+// frontend seule ne suffit pas à les protéger si jamais elles étaient
+// appelées autrement (accès direct au gateway, autre client...). On vérifie
+// donc ICI le rôle ROLE_ADMIN, porté par x-user-roles — header injecté par
+// le gateway à partir du JWT vérifié (voir gateway/src/auth.js), donc fiable
+// (le gateway est la seule porte d'entrée réseau vers ce service).
+function isAdmin(req) {
+  const roles = (req.headers["x-user-roles"] || "").split(",").filter(Boolean);
+  return roles.includes("ROLE_ADMIN");
+}
 
 app.get("/admin/stats", async (_req, res) => {
   const [conversations, messages] = await Promise.all([
@@ -591,6 +603,62 @@ app.get("/admin/stats", async (_req, res) => {
     totalConversations: conversations.rows[0].count,
     totalMessages: messages.rows[0].count,
   });
+});
+
+// Liste des conversations d'un utilisateur donné, pour l'écran admin de
+// consultation en lecture seule (/admin/users/:userId/conversations). Même
+// requête que GET /conversations, mais filtrée par un userId arbitraire
+// passé en query plutôt que par l'identité de l'appelant.
+app.get("/admin/conversations", async (req, res) => {
+  if (!isAdmin(req)) {
+    return res.status(403).json({ error: "Accès réservé aux administrateurs" });
+  }
+
+  const { userId } = req.query;
+  if (!userId) {
+    return res.status(400).json({ error: "userId requis" });
+  }
+
+  const result = await pool.query(
+    `SELECT c.*, COUNT(m.id)::int AS message_count
+     FROM chat_conversations c
+     LEFT JOIN chat_messages m ON m.conversation_id = c.id
+     WHERE c.user_id = $1
+     GROUP BY c.id
+     ORDER BY c.updated_at DESC`,
+    [userId]
+  );
+
+  res.json(result.rows);
+});
+
+// Détail en lecture seule d'une conversation appartenant à N'IMPORTE QUEL
+// utilisateur (contrairement à GET /conversations/:id qui exige
+// user_id = appelant). Volontairement pas de route PATCH/DELETE
+// équivalente : la consultation admin ne permet ni modification ni
+// suppression des conversations d'un autre utilisateur (voir consigne
+// produit) — seules ses propres conversations restent modifiables/
+// supprimables via les routes existantes.
+app.get("/admin/conversations/:id", async (req, res) => {
+  if (!isAdmin(req)) {
+    return res.status(403).json({ error: "Accès réservé aux administrateurs" });
+  }
+
+  const convResult = await pool.query(
+    "SELECT * FROM chat_conversations WHERE id = $1",
+    [req.params.id]
+  );
+  const conversation = convResult.rows[0];
+  if (!conversation) {
+    return res.status(404).json({ error: "Conversation introuvable" });
+  }
+
+  const messagesResult = await pool.query(
+    "SELECT id, role, content, created_at FROM chat_messages WHERE conversation_id = $1 ORDER BY created_at ASC",
+    [req.params.id]
+  );
+
+  res.json({ ...conversation, messages: messagesResult.rows });
 });
 
 initSchema()

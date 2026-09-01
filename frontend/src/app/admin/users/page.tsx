@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Loader2 } from "lucide-react";
+import Link from "next/link";
+import { Loader2, MessageSquare } from "lucide-react";
 import { getGradeLevelLabel } from "@/lib/utils";
 
 interface UserInfo {
@@ -55,6 +56,7 @@ export default function AdminUsersPage() {
                 <th className="text-left px-4 py-3 font-medium">Rôles</th>
                 <th className="text-left px-4 py-3 font-medium">Niveau / Série</th>
                 <th className="text-left px-4 py-3 font-medium">Inscrit le</th>
+                <th className="text-right px-4 py-3 font-medium">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--color-border)]">
@@ -83,6 +85,16 @@ export default function AdminUsersPage() {
                   </td>
                   <td className="px-4 py-3 text-[var(--color-muted)]">
                     {user.createdAt ? new Date(user.createdAt).toLocaleDateString("fr-FR") : "—"}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <Link
+                      href={`/admin/users/${user.id}/conversations?name=${encodeURIComponent(user.name ?? user.username)}`}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium text-[var(--color-primary)] hover:bg-[var(--color-surface-hover)] transition-colors"
+                      title="Consulter les conversations"
+                    >
+                      <MessageSquare size={14} />
+                      Conversations
+                    </Link>
                   </td>
                 </tr>
               ))}
