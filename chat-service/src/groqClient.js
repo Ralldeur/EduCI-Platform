@@ -21,6 +21,19 @@ const MIN_MAX_TOKENS = 2500;
 // deux appels de /exercises/generate et /exercises/correct dans index.js —
 // le second appel, rédaction seule, peut se contenter de ce plancher).
 const MIN_MAX_TOKENS_NO_REASONING = 800;
+// Plafond dur de Groq sur `max_tokens` pour qwen/qwen3.6-27b, indépendant du
+// budget TPM restant — confirmé par l'erreur 400 obtenue le 2026-09-04 dès
+// que GROQ_TPM_LIMIT a été relevé au-delà de cette valeur : "max_tokens must
+// be less than or equal to 16384, the maximum value for max_tokens is less
+// than the context_window for this model". Avant ce relevage, l'ancien
+// TPM_LIMIT (8000) ramenait toujours `available` largement sous ce plafond
+// par accident, ce qui le rendait invisible — computeMaxTokens() doit
+// borner explicitement les deux limites (TPM ET plafond par requête), sinon
+// une hausse de GROQ_TPM_LIMIT fait à nouveau échouer /exercises/generate et
+// /exercises/correct (desiredMaxTokens: 100000, voir index.js) avec ce même
+// 400. 16000 plutôt que 16384 pour garder une petite marge, par cohérence
+// avec le desiredMaxTokens déjà utilisé pour QUIZ (voir index.js).
+const MODEL_MAX_OUTPUT_TOKENS = 16000;
 
 // Estimation grossière (~3 caractères/token). Mesuré le 31/08 sur ce
 // contenu (français pédagogique + programme scolaire ivoirien) : le
@@ -48,16 +61,22 @@ function estimatePromptTokens(messages) {
 }
 
 /**
- * Calcule le max_tokens réellement envoyé à Groq, borné par ce qu'il reste
- * de budget TPM une fois le prompt estimé déduit. Lève une erreur
- * (err.code === "PROMPT_TOO_LARGE") plutôt que de laisser Groq renvoyer un
- * 413 brut, si même le plancher MIN_MAX_TOKENS ferait dépasser TPM_LIMIT —
- * ça peut arriver sur une conversation avec beaucoup d'historique.
+ * Calcule le max_tokens réellement envoyé à Groq : le minimum entre le
+ * budget désiré par l'appelant, ce qu'il reste de budget TPM une fois le
+ * prompt estimé déduit, ET le plafond dur par requête de Groq pour ce
+ * modèle (MODEL_MAX_OUTPUT_TOKENS) — les trois bornes s'appliquent
+ * ensemble, aucune ne remplace les autres (voir le commentaire sur
+ * MODEL_MAX_OUTPUT_TOKENS : sans elle, un TPM_LIMIT généreux laisse passer
+ * un desiredMaxTokens surdimensionné tel quel jusqu'à Groq, qui le rejette).
+ * Lève une erreur (err.code === "PROMPT_TOO_LARGE") plutôt que de laisser
+ * Groq renvoyer un 413 brut, si même le plancher MIN_MAX_TOKENS ferait
+ * dépasser TPM_LIMIT — ça peut arriver sur une conversation avec beaucoup
+ * d'historique.
  */
 function computeMaxTokens(messages, desiredMaxTokens, minMaxTokens = MIN_MAX_TOKENS) {
   const promptTokens = estimatePromptTokens(messages);
   const available = TPM_LIMIT - promptTokens - SAFETY_MARGIN;
-  const finalMaxTokens = Math.min(desiredMaxTokens, available);
+  const finalMaxTokens = Math.min(desiredMaxTokens, available, MODEL_MAX_OUTPUT_TOKENS);
 
   // Diagnostic temporaire (voir désaccord observé le 31/08 entre cette
   // estimation et le "Requested" réel renvoyé par Groq en cas de 413) —

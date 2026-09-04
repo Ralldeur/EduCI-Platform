@@ -31,5 +31,11 @@ export async function initSchema() {
       content         TEXT NOT NULL,
       created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+
+    -- Indispensable pour paginer l'historique (WHERE conversation_id = $1
+    -- ORDER BY created_at) sans scanner toute la table sur les conversations
+    -- à plusieurs milliers de messages.
+    CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation_created_at
+      ON chat_messages (conversation_id, created_at);
   `);
 }

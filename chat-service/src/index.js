@@ -6,6 +6,7 @@ import { searchRag } from "./ragClient.js";
 import { buildSystemPrompt, docTypeForMode } from "./promptBuilder.js";
 import { streamAIResponse, generateJSON } from "./groqClient.js";
 import { buildCurriculumContext, getCycle, IVORIAN_EXAMS } from "./curriculum.js";
+import { verifyChecks } from "./mathCheck.js";
 
 const app = express();
 const PORT = process.env.PORT || 8082;
@@ -77,8 +78,65 @@ app.get("/conversations", async (req, res) => {
   res.json(result.rows);
 });
 
-// Détail d'une conversation avec son historique complet de messages
-// (pour afficher le fil de discussion quand on clique dessus dans la sidebar).
+// Nombre de messages renvoyés par page (le plus récent d'abord). Une
+// conversation peut accumuler plusieurs milliers de messages ; en charger
+// l'historique complet d'un coup rend la page inutilisable (DOM énorme,
+// 10-15s de chargement) — voir audit perf.
+const MESSAGE_PAGE_SIZE = 50;
+
+// Charge une page de messages d'une conversation, du plus récent au plus
+// ancien, avec pagination "cursor" vers l'arrière via `before` (ISO
+// timestamp du message le plus ancien déjà chargé côté client — voir
+// ChatMessage.createdAt). Réutilisée par GET /conversations/:id et
+// GET /admin/conversations/:id, seule la vérification de propriétaire diffère
+// entre les deux routes.
+//
+// On sur-fetch d'une ligne (LIMIT + 1) pour déterminer hasMore sans requête
+// supplémentaire ; `total` reste utile côté frontend même si hasMore suffit
+// à afficher/masquer le bouton "charger plus".
+async function fetchMessagesPage(conversationId, before) {
+  const params = [conversationId];
+  let beforeClause = "";
+  if (before) {
+    params.push(before);
+    beforeClause = `AND created_at < $${params.length}`;
+  }
+  params.push(MESSAGE_PAGE_SIZE + 1);
+
+  const [messagesResult, totalResult] = await Promise.all([
+    pool.query(
+      `SELECT id, role, content, created_at FROM chat_messages
+       WHERE conversation_id = $1 ${beforeClause}
+       ORDER BY created_at DESC
+       LIMIT $${params.length}`,
+      params
+    ),
+    pool.query(
+      "SELECT COUNT(*)::int AS count FROM chat_messages WHERE conversation_id = $1",
+      [conversationId]
+    ),
+  ]);
+
+  const hasMore = messagesResult.rows.length > MESSAGE_PAGE_SIZE;
+  const page = (hasMore ? messagesResult.rows.slice(0, MESSAGE_PAGE_SIZE) : messagesResult.rows).reverse();
+
+  return { messages: page, hasMore, total: totalResult.rows[0].count };
+}
+
+// `before` doit être un timestamp ISO exploitable par Postgres ; une valeur
+// absente ou invalide est ignorée (première page) plutôt que de faire
+// planter la requête sur un paramètre malformé.
+function parseBeforeParam(req) {
+  const { before } = req.query;
+  if (typeof before !== "string" || before.length === 0 || Number.isNaN(Date.parse(before))) {
+    return undefined;
+  }
+  return before;
+}
+
+// Détail d'une conversation avec une page de son historique de messages
+// (les plus récents par défaut — voir fetchMessagesPage ci-dessus) pour
+// afficher le fil de discussion quand on clique dessus dans la sidebar.
 app.get("/conversations/:id", async (req, res) => {
   const { userId } = identity(req);
   if (!userId) return res.status(401).json({ error: "Non authentifié" });
@@ -92,12 +150,9 @@ app.get("/conversations/:id", async (req, res) => {
     return res.status(404).json({ error: "Conversation introuvable" });
   }
 
-  const messagesResult = await pool.query(
-    "SELECT id, role, content, created_at FROM chat_messages WHERE conversation_id = $1 ORDER BY created_at ASC",
-    [req.params.id]
-  );
+  const { messages, hasMore, total } = await fetchMessagesPage(req.params.id, parseBeforeParam(req));
 
-  res.json({ ...conversation, messages: messagesResult.rows });
+  res.json({ ...conversation, messages, hasMore, totalMessages: total });
 });
 
 // Mise à jour partielle d'une conversation (utilisé par ModeSelector côté
@@ -219,9 +274,23 @@ app.post("/chat", async (req, res) => {
     { role: "user", content: message },
   ];
 
+  // Mode QUIZ : depuis que docTypeForMode interroge "cours" (voir
+  // promptBuilder.js), le system prompt inclut plusieurs extraits de cours
+  // denses (plus longs qu'un simple chunk "exercice"), ce qui laisse moins
+  // de budget TPM disponible pour la génération — un quiz complet (3
+  // questions QCM + explications détaillées) peut alors se faire couper en
+  // plein milieu (finish_reason "length", observé le 2026-09-03). Même
+  // solution que pour /exercises/generate et /exercises/correct (voir plus
+  // bas) : demander délibérément un maxTokens surdimensionné, que
+  // computeMaxTokens() (groqClient.js) ramène de toute façon à tout ce qui
+  // reste du budget TPM une fois le prompt déduit — ça ne coûte rien tant
+  // que le budget réel est plus large que l'ancien plafond fixe de 6000, et
+  // ça laisse le maximum de marge possible quand ce n'est pas le cas.
+  const streamOptions = conversation.mode === "QUIZ" ? { maxTokens: 16000 } : undefined;
+
   let stream;
   try {
-    stream = await streamAIResponse(chatMessages);
+    stream = await streamAIResponse(chatMessages, streamOptions);
   } catch (err) {
     return sendGroqError(res, err, "appel Groq");
   }
@@ -363,13 +432,26 @@ Réponds UNIQUEMENT avec ce JSON compact (pas d'énoncé rédigé, pas d'explica
       "params": "paramètres numériques validés (équation, valeurs, résultat attendu)",
       "verification": { "expression calculée (ex. f(2))": "valeur exacte obtenue au calcul" }
     }
+  ],
+  "checks": [
+    { "type": "geometric", "u0": 100000, "q": 1.02, "n": 10, "claimed": 121899.44 },
+    { "type": "arithmetic", "u0": 5, "r": 3, "n": 12, "claimed": 41 },
+    { "type": "function_eval", "expr": "(x^2+2)/(x-1)", "x": 2, "claimed": 6 }
   ]
 }
-Le champ "verification" doit contenir CHAQUE valeur calculée à l'étape 3, avec exactement la même valeur que celle qui apparaîtra dans l'énoncé final — ces valeurs serviront de référence pour l'étape de rédaction.`;
+Le champ "verification" doit contenir CHAQUE valeur calculée à l'étape 3, avec exactement la même valeur que celle qui apparaîtra dans l'énoncé final — ces valeurs serviront de référence pour l'étape de rédaction.
+Le champ "checks" (tableau, peut rester vide) est recalculé indépendamment côté serveur pour repérer une erreur d'arithmétique — remplis-le UNIQUEMENT pour les valeurs de l'étape 3 qui correspondent EXACTEMENT à l'un de ces 3 cas (des nombres, pas de texte ni de fraction littérale) :
+- suite géométrique : u_n = u0 × q^n → {"type":"geometric","u0":...,"q":...,"n":...,"claimed":...}
+- suite arithmétique : u_n = u0 + n×r → {"type":"arithmetic","u0":...,"r":...,"n":...,"claimed":...}
+- image f(x) d'une fonction polynomiale/rationnelle à une variable en un point → {"type":"function_eval","expr":"expression avec x, ex (x^2+2)/(x-1)","x":...,"claimed":...}
+N'ajoute RIEN dans "checks" pour un autre type de calcul (dérivée, limite, nombre complexe, statistiques, preuve, équation à résoudre...) — laisse le tableau vide plutôt que de forcer un cas qui ne correspond pas exactement.`;
 
-  let rawPlans;
-  try {
-    rawPlans = await generateJSON(
+  // Un seul appel à l'étape 1, qui renvoie plans + checks déjà parsés (best
+  // effort : un JSON illisible donne des tableaux vides plutôt qu'une
+  // exception, cohérent avec le comportement déjà en place avant le
+  // garde-fou de calcul).
+  async function runVerificationStep() {
+    const raw = await generateJSON(
       [
         {
           role: "system",
@@ -380,19 +462,77 @@ Le champ "verification" doit contenir CHAQUE valeur calculée à l'étape 3, ave
       ],
       { maxTokens: 100000, reasoningEffort: "default" }
     );
+    try {
+      const parsed = JSON.parse(raw);
+      return { plans: parsed?.plans ?? [], checks: parsed?.checks ?? [] };
+    } catch (err) {
+      console.error("[chat-service] réponse IA non-JSON pour la vérification exercices:", raw);
+      return { plans: [], checks: [] };
+    }
+  }
+
+  let plans, checks;
+  try {
+    ({ plans, checks } = await runVerificationStep());
   } catch (err) {
     return sendGroqError(res, err, "vérification paramètres exercices");
   }
 
-  // Best-effort : si l'étape de vérification ne renvoie pas un JSON
-  // exploitable, on continue sans paramètres pré-validés plutôt que
-  // d'échouer toute la requête — l'étape de rédaction reste fonctionnelle,
-  // juste sans le bénéfice de la vérification silencieuse.
-  let plans = [];
-  try {
-    plans = JSON.parse(rawPlans)?.plans ?? [];
-  } catch (err) {
-    console.error("[chat-service] réponse IA non-JSON pour la vérification exercices:", rawPlans);
+  // Garde-fou de recalcul programmatique (voir mathCheck.js) : l'étape 1
+  // ci-dessus ne fait que "penser" avoir vérifié ses propres valeurs — rien
+  // ne garantissait jusqu'ici qu'elle ait vraiment recalculé juste (voir
+  // l'audit RAG du 2026-09-04 : erreur de ~0,6% sur u8/u9 et de ~1,4% sur
+  // un ratio logarithmique, toutes deux passées inaperçues). On recalcule
+  // ici indépendamment chaque "check" couvert (suites géométrique/
+  // arithmétique, image d'une fonction simple en un point — voir
+  // mathCheck.js pour le détail et les limites de couverture) et, en cas
+  // d'écart au-delà de la tolérance, on relance l'étape 1 UNE fois plutôt
+  // que de laisser passer une valeur fausse jusqu'à l'élève. Une seule
+  // relance (pas de boucle) : au-delà, mieux vaut continuer avec la
+  // meilleure tentative disponible que de multiplier les appels Groq pour
+  // un défaut qui reste rare.
+  let verification = verifyChecks(checks);
+  // Diagnostic (même logique que le log "budget Groq" existant) : combien
+  // de checks l'étape 1 a-t-elle rempli, et combien sont couverts par le
+  // garde-fou (ni vide ni "skipped") — utile pour juger si l'étape 1
+  // remplit vraiment "checks" en pratique, indépendamment d'un écart.
+  console.log(
+    `[chat-service] garde-fou de calcul : ${checks.length} check(s) reçu(s), ${
+      verification.results.filter((r) => !r.skipped).length
+    } couvert(s), ok=${verification.ok}`
+  );
+  if (!verification.ok) {
+    console.warn(
+      "[chat-service] garde-fou de calcul : écart détecté à l'étape 1, relance —",
+      JSON.stringify(verification.results)
+    );
+    try {
+      const retry = await runVerificationStep();
+      const retryVerification = verifyChecks(retry.checks);
+      if (retryVerification.ok && retry.plans.length > 0) {
+        console.log("[chat-service] garde-fou de calcul : relance propre, valeurs corrigées utilisées");
+        plans = retry.plans;
+        checks = retry.checks;
+        verification = retryVerification;
+      } else {
+        console.warn(
+          "[chat-service] garde-fou de calcul : la relance ne corrige pas l'écart, on continue avec la meilleure tentative disponible —",
+          JSON.stringify(retryVerification.results)
+        );
+        // On garde la relance si elle a au moins produit des plans (mieux
+        // qu'une tentative vide), même si son propre recalcul échoue
+        // encore — sinon on reste sur la tentative initiale.
+        if (retry.plans.length > 0) {
+          plans = retry.plans;
+          checks = retry.checks;
+        }
+      }
+    } catch (err) {
+      console.error(
+        "[chat-service] garde-fou de calcul : échec de la relance de l'étape 1, on continue avec la tentative initiale:",
+        err.message
+      );
+    }
   }
 
   // --- Étape 2/2 : rédaction finale à partir des paramètres validés ---
@@ -405,7 +545,7 @@ Le champ "verification" doit contenir CHAQUE valeur calculée à l'étape 3, ave
   // redéduire (et potentiellement diverger) à partir de "params" seul.
   const plansBlock =
     plans.length > 0
-      ? `\n\nParamètres déjà vérifiés à utiliser tels quels (ne les recalcule pas) :\n${plans
+      ? `\n\nParamètres déjà vérifiés à utiliser tels quels, sans aucun recalcul ni vérification :\n${plans
           .map((p, i) => {
             const verif =
               p.verification && typeof p.verification === "object" && !Array.isArray(p.verification)
@@ -420,8 +560,10 @@ Le champ "verification" doit contenir CHAQUE valeur calculée à l'étape 3, ave
 
   const draftPrompt = `${sharedContext}${plansBlock}
 
-Rédige maintenant les ${exerciseCount} exercices complets (énoncé + réponse + explication) à partir des paramètres ci-dessus déjà validés — ne les remets pas en question, contente-toi de rédiger proprement.
-Pour tout calcul annexe non couvert par ces paramètres (limite, dérivée, signe, etc.), rédige-le directement, sans hésitation ni retour en arrière visible : jamais de mots ou tournures comme « attends », « en fait », « non, mieux », « réexaminons », « pour simplifier », ou toute autre trace de tâtonnement. La correction doit se lire comme si elle avait été juste du premier coup.
+Rédige maintenant les ${exerciseCount} exercices complets (énoncé + réponse + explication) à partir des paramètres ci-dessus déjà validés. Traite-les comme des faits définitifs et non négociables : ne les recalcule pas, ne les re-vérifie pas.
+
+CAS PARTICULIER IMPORTANT — un calcul que tu rédiges semble contredire une valeur déjà fournie : cela peut arriver (ex. tu re-dérives une fonction "pour expliquer la méthode" et tombes sur un résultat différent de celui fourni). La règle est stricte et non négociable : tu ignores silencieusement ta propre reformulation, tu écris directement la valeur fournie comme si elle découlait naturellement du calcul que tu rédiges, et tu n'exprimes JAMAIS ce doute d'aucune façon — pas de phrase, pas d'aparté, pas de parenthèse, pas de point d'interrogation après un résultat. Aucune mention de « les paramètres fournis », « l'instruction dit », ou toute autre référence à ce prompt ou à un possible écart ne doit jamais apparaître dans la copie remise à l'élève : à ses yeux, il n'y a jamais eu qu'un seul calcul, celui qui aboutit à la valeur fournie.
+Pour tout calcul annexe non couvert par ces paramètres (limite, dérivée, signe, etc.), rédige-le directement, sans hésitation ni retour en arrière visible : jamais de mots ou tournures comme « attends », « en fait », « non », « non, mieux », « ou alors », « cependant », « attention », « il y a une incohérence », « réexaminons », « pour simplifier », ou toute autre trace de tâtonnement, de doute ou de méta-commentaire sur ta propre rédaction. La correction doit se lire comme si elle avait été juste et certaine du tout premier coup, sans qu'aucune étape intermédiaire n'ait jamais été remise en cause.
 
 Réponds en JSON avec le format suivant :
 {
@@ -575,25 +717,26 @@ Réponds en JSON avec le format :
 });
 
 // --- Admin --------------------------------------------------------------
-// /admin/stats : pas de vérification ROLE_ADMIN ici, comme pour le reste des
-// routes "propriétaire" de chat-service — l'autorisation est décidée en
-// amont par le frontend (voir frontend/src/lib/auth.ts::requireAdmin) avant
-// même d'appeler le gateway, même convention que /conversations (qui ne
-// vérifie pas non plus de rôle, seulement l'identité via x-user-id).
-//
-// /admin/conversations* en revanche donnent accès aux conversations de
-// N'IMPORTE QUEL utilisateur (pas de filtre user_id) : une vérification
-// frontend seule ne suffit pas à les protéger si jamais elles étaient
-// appelées autrement (accès direct au gateway, autre client...). On vérifie
-// donc ICI le rôle ROLE_ADMIN, porté par x-user-roles — header injecté par
-// le gateway à partir du JWT vérifié (voir gateway/src/auth.js), donc fiable
-// (le gateway est la seule porte d'entrée réseau vers ce service).
+// /admin/stats et /admin/conversations* donnent accès à des données
+// agrégées ou appartenant à N'IMPORTE QUEL utilisateur (pas de filtre
+// user_id, contrairement à /conversations) : une vérification frontend seule
+// (frontend/src/lib/auth.ts::requireAdmin) ne suffit pas à les protéger si
+// jamais elles étaient appelées autrement (accès direct au gateway, autre
+// client...). On vérifie donc ICI le rôle ROLE_ADMIN, porté par
+// x-user-roles — header injecté par le gateway à partir du JWT vérifié (voir
+// gateway/src/auth.js), donc fiable (le gateway est la seule porte d'entrée
+// réseau vers ce service — voir docker-compose.yml, port non publié
+// publiquement).
 function isAdmin(req) {
   const roles = (req.headers["x-user-roles"] || "").split(",").filter(Boolean);
   return roles.includes("ROLE_ADMIN");
 }
 
-app.get("/admin/stats", async (_req, res) => {
+app.get("/admin/stats", async (req, res) => {
+  if (!isAdmin(req)) {
+    return res.status(403).json({ error: "Accès réservé aux administrateurs" });
+  }
+
   const [conversations, messages] = await Promise.all([
     pool.query("SELECT COUNT(*)::int AS count FROM chat_conversations"),
     pool.query("SELECT COUNT(*)::int AS count FROM chat_messages"),
@@ -653,12 +796,9 @@ app.get("/admin/conversations/:id", async (req, res) => {
     return res.status(404).json({ error: "Conversation introuvable" });
   }
 
-  const messagesResult = await pool.query(
-    "SELECT id, role, content, created_at FROM chat_messages WHERE conversation_id = $1 ORDER BY created_at ASC",
-    [req.params.id]
-  );
+  const { messages, hasMore, total } = await fetchMessagesPage(req.params.id, parseBeforeParam(req));
 
-  res.json({ ...conversation, messages: messagesResult.rows });
+  res.json({ ...conversation, messages, hasMore, totalMessages: total });
 });
 
 initSchema()
