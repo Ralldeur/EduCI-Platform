@@ -2,11 +2,22 @@
 node_modules/
 **/node_modules/
 
-# Variables d'environnement (clés API, secrets)
-.env
-**/.env
-.env.local
-**/.env.local
+# Variables d'environnement (clés API, secrets). Pattern large volontaire
+# (.env*) pour couvrir aussi .env.production, .env.staging, etc. — les
+# formes explicites .env/.env.local ne couvraient QUE ces deux noms exacts,
+# pas les variantes .env.<environnement> pourtant courantes (voir audit
+# sécurité). .env.example reste tracké (fichier de doc, sans vraies valeurs).
+.env*
+**/.env*
+!.env.example
+!**/.env.example
+
+# Secrets du vault Keycloak (mot de passe SMTP notamment — voir
+# keycloak/README.md) : jamais committés, montés dans le conteneur pour être
+# référencés via ${vault.xxx} dans la config du realm, jamais en clair
+# dedans.
+keycloak/vault/*
+!keycloak/vault/.gitkeep
 
 # Logs
 *.log

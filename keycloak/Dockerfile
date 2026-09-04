@@ -11,10 +11,16 @@
 # que téléchargé à la volée, pour ne pas dépendre de la disponibilité du lien
 # GitHub à chaque build. Alternative :
 #   ADD https://github.com/leroyguillaume/keycloak-bcrypt/releases/download/v1.6.0/keycloak-bcrypt-1.6.0.jar /opt/keycloak/providers/keycloak-bcrypt-1.6.0.jar
+# --vault=file : active le provider de vault "files-plaintext", pour que le
+# mot de passe SMTP (config e-mail du realm, voir docker-compose.yml et
+# keycloak/README.md) soit référencé via ${vault.smtppassword} dans la
+# config du realm plutôt que stocké en clair dedans — realm-export.json est
+# suivi par git, un mot de passe SMTP en clair dedans serait committé de la
+# même façon que les comptes de démo (voir audit sécurité).
 FROM quay.io/keycloak/keycloak:24.0 AS builder
 COPY keycloak-bcrypt-1.6.0.jar /opt/keycloak/providers/keycloak-bcrypt-1.6.0.jar
 WORKDIR /opt/keycloak
-RUN /opt/keycloak/bin/kc.sh build
+RUN /opt/keycloak/bin/kc.sh build --vault=file
 FROM quay.io/keycloak/keycloak:24.0
 COPY --from=builder /opt/keycloak/ /opt/keycloak/
 ENTRYPOINT ["/opt/keycloak/bin/kc.sh"]

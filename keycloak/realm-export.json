@@ -7,12 +7,26 @@
   "ssoSessionMaxLifespan": 28800,
   "registrationAllowed": true,
   "registrationEmailAsUsername": false,
-  "verifyEmail": false,
+  "verifyEmail": true,
   "loginWithEmailAllowed": true,
   "duplicateEmailsAllowed": false,
   "resetPasswordAllowed": true,
   "editUsernameAllowed": false,
   "bruteForceProtected": true,
+  "internationalizationEnabled": true,
+  "supportedLocales": ["en", "fr"],
+  "defaultLocale": "fr",
+  "smtpServer": {
+    "host": "smtp-relay.brevo.com",
+    "port": "587",
+    "from": "zanezana39@gmail.com",
+    "fromDisplayName": "EduCI",
+    "auth": "true",
+    "starttls": "true",
+    "ssl": "false",
+    "user": "b7a1fb001@smtp-brevo.com",
+    "password": "${vault.smtppassword}"
+  },
   "roles": {
     "realm": [
       { "name": "ROLE_STUDENT" },

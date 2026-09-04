@@ -1,6 +1,6 @@
 import os
 
-from fastapi import FastAPI, Form, HTTPException, UploadFile
+from fastapi import FastAPI, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 
 from rag.extract import extract_text
@@ -13,6 +13,32 @@ app = FastAPI(title="EduCI ML Service")
 pipeline: RagPipeline | None = None
 
 VALID_DOC_TYPES = {"cours", "exercice"}
+
+# Taille max acceptée pour un fichier à ingérer (voir ingest_lesson) — sans
+# cette limite, `await file.read()` charge le fichier entier en mémoire sans
+# borne, ce qui permet un DoS par upload massif (le process ml-service n'a
+# aucune autre protection de taille en amont : ni gateway, ni Next.js ne
+# posent de limite sur ce endpoint).
+MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 Mo
+
+
+def require_admin(request: Request) -> None:
+    """Vérifie le rôle ROLE_ADMIN via le header x-user-roles, injecté par le
+    gateway à partir du JWT vérifié (voir gateway/src/auth.js) — ml-service
+    n'a lui-même aucune vérification de JWT, il fait confiance à ce header
+    exactement comme chat-service (voir isAdmin() dans chat-service/src/
+    index.js). Sans ce garde-fou, n'importe quel utilisateur authentifié
+    (pas seulement un admin) pouvait ingérer/supprimer des documents RAG ou
+    lire /admin/stats en appelant directement /api/ml/... via le gateway —
+    seule la page Next.js /admin/lessons vérifiait ROLE_ADMIN, pas ce
+    service. Ne PAS appliquer cette vérification à /rag/search : chat-service
+    l'appelle en service-à-service (pas via le gateway, pas de header
+    x-user-roles) pour CHAQUE requête de chat/exercice, peu importe le rôle
+    de l'élève.
+    """
+    roles = request.headers.get("x-user-roles", "")
+    if "ROLE_ADMIN" not in roles.split(","):
+        raise HTTPException(403, "Accès réservé aux administrateurs")
 
 
 @app.on_event("startup")
@@ -31,12 +57,14 @@ def health():
 
 
 @app.get("/admin/stats")
-def admin_stats():
+def admin_stats(request: Request):
+    require_admin(request)
     return {"totalDocuments": pipeline.count_documents()}
 
 
 @app.post("/lessons/ingest")
 async def ingest_lesson(
+    request: Request,
     file: UploadFile,
     subject: str = Form(...),
     gradeLevel: str = Form(""),
@@ -49,10 +77,16 @@ async def ingest_lesson(
     docType doit être 'cours' ou 'exercice' — jamais autre chose, pour
     garantir la séparation stricte des deux au moment de la recherche.
     """
+    require_admin(request)
     if docType not in VALID_DOC_TYPES:
         raise HTTPException(400, f"docType doit être 'cours' ou 'exercice', reçu: {docType!r}")
 
     content = await file.read()
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            413,
+            f"Fichier trop volumineux ({len(content) // 1024} Ko) — limite {MAX_UPLOAD_BYTES // 1024 // 1024} Mo",
+        )
     try:
         text = extract_text(file.filename, content)
     except Exception:
@@ -85,17 +119,19 @@ async def ingest_lesson(
 
 
 @app.get("/lessons")
-def list_lessons():
+def list_lessons(request: Request):
     """Documents ingérés dans le RAG, groupés par fichier source (voir
     RagPipeline.list_documents) — pour l'écran /admin/lessons."""
+    require_admin(request)
     return {"documents": pipeline.list_documents()}
 
 
 @app.delete("/lessons/by-source/{source}")
-def delete_lesson_by_source(source: str):
+def delete_lesson_by_source(source: str, request: Request):
     """Supprime tous les chunks d'un document ingéré, identifié par son nom
     de fichier (`source`). C'est l'action déclenchée par le bouton
     supprimer de la liste des documents dans /admin/lessons."""
+    require_admin(request)
     deleted = pipeline.delete_by_source(source)
     if deleted == 0:
         raise HTTPException(404, f"Aucun document trouvé pour la source {source!r}")
@@ -103,10 +139,11 @@ def delete_lesson_by_source(source: str):
 
 
 @app.delete("/lessons/by-id/{point_id}")
-def delete_lesson_by_id(point_id: str):
+def delete_lesson_by_id(point_id: str, request: Request):
     """Repli minimal : supprime un unique chunk/point par son id Qdrant,
     pour le cas où il faut retirer un point précis en dehors de la
     suppression groupée par document."""
+    require_admin(request)
     if not pipeline.delete_by_id(point_id):
         raise HTTPException(404, f"Aucun point trouvé pour l'id {point_id!r}")
     return {"id": point_id, "deleted": True}

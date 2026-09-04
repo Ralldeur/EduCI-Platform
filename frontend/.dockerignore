@@ -1,0 +1,13 @@
+# Empêche ces fichiers de faire partie du contexte de build envoyé au
+# démon Docker (voir audit sécurité) — sans ce fichier, `COPY . .` dans le
+# Dockerfile copie aussi .env (secrets en clair sur le disque local) dans la
+# couche intermédiaire de build, même si l'image finale ne les réutilise pas
+# explicitement.
+node_modules
+.next
+.git
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store

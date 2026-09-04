@@ -28,9 +28,12 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files
-.env
-.env*.local
+# env files — pattern large (.env*) pour couvrir aussi .env.production,
+# .env.staging, etc., pas seulement .env/.env.local (voir audit sécurité :
+# root .gitignore applique déjà **/.env* sur tout le repo, ce fichier reste
+# cohérent avec lui pour qui ne lit que frontend/.gitignore).
+.env*
+!.env.example
 
 # vercel
 .vercel

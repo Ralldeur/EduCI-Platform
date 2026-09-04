@@ -1,124 +1,113 @@
-# Ivoir'Académie 🇨🇮
+# EduCI 🇨🇮
 
-Plateforme éducative intelligente pour les élèves ivoiriens, propulsée par l'IA.
+Interface web d'EduCI, plateforme éducative intelligente pour les élèves
+ivoiriens. Cette application Next.js est le point d'entrée utilisateur de la
+plateforme : elle ne parle à aucune base de données ni à aucun fournisseur
+d'IA en direct — toutes ses routes API relaient leurs appels au `gateway` du
+projet, qui les distribue vers les microservices (`auth-service`,
+`chat-service`, `ml-service`).
+
+Pour l'architecture globale, le démarrage Docker complet et les autres
+services, voir le [README à la racine du dépôt](../README.md). Ce document ne
+couvre que ce qui est spécifique au frontend.
+
+## Rôle dans l'architecture
+
+```text
+Navigateur
+    |
+    v
+frontend :3000 (Next.js — cette application)
+    |
+    v
+gateway :8000 (validation JWT, routage)
+    |-------------------|-------------------|
+    v                   v                   v
+auth-service :8081  chat-service :8082  ml-service :8086
+```
+
+- **Authentification** : NextAuth avec le provider Keycloak (`src/lib/auth.ts`).
+  Les tokens sont propagés vers le gateway pour chaque appel API.
+- **Chat, conversations, exercices** : les routes sous `src/app/api/` sont de
+  simples relais (`fetch` vers `GATEWAY_URL`) — voir par exemple
+  `src/app/api/chat/route.ts`, qui transmet le flux SSE de `chat-service` sans
+  le bufferiser côté Next.js.
+- **Panel administrateur** : les routes sous `src/app/api/admin/` combinent
+  des appels au gateway (conversations, stats, leçons) et des appels directs à
+  l'API Admin Keycloak via `src/lib/keycloakAdmin.ts` (gestion des
+  utilisateurs et de leurs rôles).
 
 ## Fonctionnalités
 
-- 💬 **Chat intelligent** — Pose tes questions et obtiens des explications adaptées à ton niveau
-- 📝 **Exercices** — Génération automatique d'exercices avec correction étape par étape
-- ✅ **Correction** — Soumets ton travail et reçois une correction détaillée avec une note
-- 🧠 **Quiz** — Des quiz interactifs pour tester tes connaissances
-- 📚 **Révision** — Fiches de révision et résumés de leçons
-- 🎓 **Programme ivoirien** — Basé sur le programme scolaire de Côte d'Ivoire
-- 🌐 **Agents de scraping** — Récupération automatique de contenus depuis des sites éducatifs ivoiriens
-- 🤖 **IA puissante** — Groq (Llama 3) pour des réponses rapides et gratuites + RAG enrichi
-
-## Matières
-
-Mathématiques, Français, Physique-Chimie, SVT, Histoire-Géographie, Philosophie, Anglais
+- 💬 **Chat intelligent** — questions/réponses en streaming, propulsées par `chat-service`
+- 📝 **Exercices** — génération et correction étape par étape
+- 🧠 **RAG** — réponses enrichies par le contenu pédagogique indexé (`ml-service`)
+- 🎓 **Programme ivoirien** — contexte curriculaire (APC) injecté dans les prompts (`src/lib/curriculum.ts`)
+- 🛠️ **Panel admin** (`/admin`, rôle `ROLE_ADMIN`) — utilisateurs, conversations, documents indexés
 
 ## Technologies
 
-- **Frontend** : Next.js 15, React 19, TypeScript, Tailwind CSS 4
-- **Backend** : Next.js API Routes
-- **Base de données** : SQLite (dev) / PostgreSQL (prod) avec Prisma ORM
-- **IA** : Groq API (Llama 3.3 70B) — gratuit et ultra-rapide, avec fallback OpenAI
-- **Scraping** : Cheerio + Axios (agents intelligents)
-- **Auth** : NextAuth.js
-
-## Architecture IA
-
-```
-Utilisateur → Chat → RAG (Leçons DB + Contenu scrappé) → Groq/Llama 3 → Réponse
-                                    ↑
-                        Agents de scraping
-                    ┌─────────┼──────────┐
-              education    abidjan.net   Wikipedia
-              .gouv.ci                     FR
-```
-
-Les agents de scraping récupèrent du contenu éducatif depuis :
-- **education.gouv.ci** — Ministère de l'Éducation Nationale de Côte d'Ivoire
-- **abidjan.net** — Actualités éducatives ivoiriennes
-- **Wikipedia FR** — Définitions et contenus encyclopédiques
-
-Le contenu est stocké en base de données et utilisé comme contexte RAG pour enrichir les réponses de l'IA.
-
-## Installation
-
-```bash
-# Cloner le repo
-git clone https://github.com/Ralldeur/ivoir-academie.git
-cd ivoir-academie
-
-# Installer les dépendances
-npm install
-
-# Configurer l'environnement
-cp .env.example .env
-# Ajouter votre clé API Groq (gratuit : https://console.groq.com/keys)
-
-# Initialiser la base de données
-npx prisma db push
-npm run db:seed
-
-# Lancer le serveur de développement
-npm run dev
-```
-
-## Comptes de démonstration
-
-- **Admin** : admin@ivoir-academie.ci / admin123
-- **Élève** : eleve@ivoir-academie.ci / eleve123
+- Next.js 15 (App Router), React 19, TypeScript
+- Tailwind CSS 4
+- NextAuth.js (provider Keycloak)
+- react-markdown + KaTeX pour le rendu des réponses (formules, code)
 
 ## Structure du projet
 
 ```
 src/
 ├── app/
-│   ├── (auth)/          # Pages de connexion/inscription
-│   ├── chat/            # Interface de chat IA
-│   ├── exercises/       # Générateur d'exercices
-│   ├── admin/           # Panel d'administration (+ scraping)
-│   └── api/             # Routes API
-│       └── admin/scrape/ # Endpoint de scraping admin
+│   ├── (auth)/          # Connexion (redirige vers Keycloak) / inscription
+│   ├── chat/             # Interface de chat IA
+│   ├── exercises/        # Générateur d'exercices
+│   ├── admin/            # Panel d'administration (utilisateurs, leçons, conversations)
+│   └── api/               # Routes API — relais vers le gateway (+ Keycloak Admin pour /admin/users)
 ├── components/
-│   ├── chat/            # Composants du chat
-│   ├── ui/              # Composants UI réutilisables
-│   └── Providers.tsx    # Providers (Auth, Theme, Toast)
+│   ├── chat/             # Composants du chat
+│   ├── ui/                # Composants UI réutilisables
+│   └── Providers.tsx      # Providers (Auth, Theme, Toast)
 ├── lib/
-│   ├── ai.ts            # Provider IA unifié (Groq + OpenAI fallback)
-│   ├── scraper.ts       # Agents de scraping (3 sources)
-│   ├── auth.ts          # Configuration NextAuth
-│   ├── openai.ts        # Client OpenAI (fallback)
-│   ├── prisma.ts        # Client Prisma
-│   └── utils.ts         # Utilitaires
-└── types/               # Types TypeScript
+│   ├── auth.ts            # Configuration NextAuth (provider Keycloak)
+│   ├── keycloakAdmin.ts   # Client pour l'API Admin Keycloak
+│   ├── curriculum.ts      # Programme scolaire ivoirien (APC) utilisé dans les prompts
+│   └── utils.ts           # Utilitaires
+└── types/                 # Types TypeScript
 ```
 
-## Variables d'environnement
+## Développement local
 
-| Variable | Description | Requis |
-|----------|-------------|--------|
-| `DATABASE_URL` | URL de connexion à la base de données | Oui |
-| `NEXTAUTH_SECRET` | Clé secrète NextAuth | Oui |
-| `NEXTAUTH_URL` | URL de l'application | Oui |
-| `GROQ_API_KEY` | Clé API Groq (gratuit, recommandé) | Groq ou OpenAI |
-| `OPENAI_API_KEY` | Clé API OpenAI (payant) | Groq ou OpenAI |
+Le frontend seul ne suffit pas à faire fonctionner l'application : il a
+besoin du `gateway` et de Keycloak (au minimum) pour l'authentification et les
+appels API. Le plus simple est de démarrer toute la plateforme avec Docker
+Compose depuis la racine du dépôt (voir le README racine), puis d'itérer sur
+le frontend en local :
 
-## Roadmap
+```bash
+cd frontend
+npm install
+cp .env.example .env
+npm run dev
+```
 
-- [x] Chat IA intelligent avec streaming
-- [x] Intégration Groq / Llama 3 (gratuit)
-- [x] Agents de scraping éducatifs
-- [x] RAG enrichi (leçons + contenu scrappé)
-- [ ] Upload PDF/images pour analyse
-- [ ] Paiements Mobile Money (Orange, Wave, MTN)
-- [ ] Application mobile (React Native)
-- [ ] Mode hors ligne
-- [ ] Statistiques d'apprentissage détaillées
-- [ ] Système de gamification (badges, points)
-- [ ] Support multilingue (Français, Anglais, Dioula, Baoulé)
+Variables d'environnement (voir `.env.example` pour le détail) :
+
+| Variable | Description |
+|----------|-------------|
+| `NEXTAUTH_SECRET` / `NEXTAUTH_URL` | Configuration NextAuth |
+| `KEYCLOAK_CLIENT_ID` / `KEYCLOAK_CLIENT_SECRET` / `KEYCLOAK_ISSUER` | Client Keycloak utilisé pour la connexion des utilisateurs |
+| `KEYCLOAK_ADMIN_CLIENT_ID` / `KEYCLOAK_ADMIN_CLIENT_SECRET` | Compte de service dédié à l'API Admin Keycloak (page `/admin/users`), distinct du client ci-dessus |
+| `GATEWAY_URL` | URL du gateway appelée côté serveur (nom du service Docker, ex. `http://gateway:8000`) |
+
+## Build
+
+```bash
+npm run build
+npm run start
+```
+
+En Docker, l'image est construite via `frontend/Dockerfile` (build Next.js en
+mode `standalone`) et orchestrée par le `docker-compose.yml` à la racine du
+dépôt.
 
 ## Licence
 

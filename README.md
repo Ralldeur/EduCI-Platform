@@ -115,8 +115,12 @@ Identifiants de developpement fournis par le realm Keycloak :
 - utilisateur eleve : `eleve.demo / eleve123` ;
 - utilisateur administrateur : `admin.demo / admin123`.
 
-Ces identifiants sont reserves au developpement local et doivent etre changes
-avant toute mise en production.
+Ces identifiants sont reserves au developpement local. Les mots de passe
+eleve.demo/admin.demo sont committes en clair dans keycloak/realm-export.json
+(historique git inclus) : voir [keycloak/README.md](keycloak/README.md) pour
+la procedure de neutralisation/suppression avant toute mise en production —
+ne pas y toucher sur l'environnement de dev actif tant qu'ils servent aux
+tests en cours.
 
 ## Contenu pedagogique et RAG
 

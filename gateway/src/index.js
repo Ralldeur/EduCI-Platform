@@ -5,6 +5,20 @@ import { requireAuth } from "./auth.js";
 const app = express();
 const PORT = process.env.PORT || 8000;
 
+// En-têtes de sécurité HTTP de base (pas de dépendance helmet ajoutée pour
+// si peu). Volontairement pas de Content-Security-Policy ici : une CSP mal
+// calibrée casse facilement des pages qu'on ne contrôle pas depuis ce
+// service (le gateway ne sert que du JSON/proxy, jamais de HTML) — à
+// définir plutôt côté frontend (voir next.config.ts) où le contenu réel est
+// rendu.
+app.disable("x-powered-by");
+app.use((_req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  next();
+});
+
 app.get("/health", (_req, res) => {
   res.json({ status: "UP" });
 });

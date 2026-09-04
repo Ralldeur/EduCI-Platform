@@ -45,9 +45,21 @@ services:
     container_name: educi-postgres
     environment:
       POSTGRES_USER: educi_admin
-      POSTGRES_PASSWORD: educi_admin_pwd
+      # Valeur par défaut conservée pour ne pas casser le volume pg_data déjà
+      # initialisé avec ce mot de passe en local — mais cette valeur a été
+      # committée en clair dans l'historique git (voir audit sécurité) : à
+      # remplacer par un POSTGRES_PASSWORD fort dans .env avant tout
+      # déploiement partagé/prod. Changer cette variable seule ne suffit PAS
+      # sur une base déjà initialisée (Postgres ne relit ce mot de passe qu'à
+      # la création du volume) — il faut aussi ALTER USER côté Postgres.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-educi_admin_pwd}
       POSTGRES_DB: educi_db
-    ports: ["5432:5432"]
+    # Lié à 127.0.0.1 uniquement : aucun service n'a besoin de joindre
+    # Postgres depuis l'extérieur de l'hôte (tout passe par le réseau docker
+    # `educi-net`) — un déploiement sans cette restriction expose la base
+    # (identifiants faibles ci-dessus) à tout le réseau/internet selon
+    # l'hébergeur. Voir audit sécurité pour le détail des services concernés.
+    ports: ["127.0.0.1:5432:5432"]
     volumes:
       - pg_data:/var/lib/postgresql/data
     networks: [educi-net]
@@ -57,18 +69,27 @@ services:
       timeout: 5s
       retries: 5
 
+  # Aucune authentification configurée (QDRANT__SERVICE__API_KEY absent) —
+  # acceptable uniquement parce que le port est lié à 127.0.0.1 (voir note
+  # postgres ci-dessus). Ne jamais publier ce port plus largement sans
+  # ajouter une api-key.
   qdrant:
     image: qdrant/qdrant:v1.10.0
     container_name: educi-qdrant
-    ports: ["6333:6333", "6334:6334"]
+    ports: ["127.0.0.1:6333:6333", "127.0.0.1:6334:6334"]
     volumes: [qdrant_data:/qdrant/storage]
     networks: [educi-net]
 
   # ---------- LLM ENGINE ----------
+  # Ollama n'a lui non plus aucune authentification — même remarque que Qdrant.
+  # Pas de port publié du tout ici (contrairement aux autres services
+  # internes) : rien dans ce repo n'a besoin de joindre Ollama depuis l'hôte
+  # (uniquement ml-service/chat-service/ollama-init, via le réseau docker) —
+  # et publier même sur 127.0.0.1 entre régulièrement en conflit avec une
+  # install Ollama native tournant déjà sur le même port côté hôte.
   ollama:
     image: ollama/ollama:latest
     container_name: educi-ollama
-    ports: ["11434:11434"]
     volumes: [ollama_data:/root/.ollama]
     networks: [educi-net]
     healthcheck:
@@ -91,52 +112,107 @@ services:
     restart: "no"
 
   # ---------- IDENTITY ----------
+  # "start-dev" : mode développement (H2/hot-reload de config autorisé,
+  # pas de cache production, pas d'exigence TLS stricte). À changer pour
+  # "start" avant toute mise en ligne réelle — voir la note détaillée en
+  # bas de ce fichier (implications hostname/TLS), volontairement pas
+  # appliqué ici car ça dépend du choix d'hébergement.
   keycloak:
     build: ./keycloak
     container_name: educi-keycloak
-    command: ["start-dev", "--import-realm"]
+    # --vault-dir : voir keycloak/vault/ (secrets référencés via ${vault.xxx}
+    # dans la config du realm, ex. mot de passe SMTP — voir keycloak/README.md
+    # pour le détail : convention de nommage, comment en ajouter un nouveau).
+    # Jamais en clair dans realm-export.json, qui est suivi par git.
+    #
+    # --vault=file passé ICI (pas seulement au build dans keycloak/Dockerfile,
+    # qui le passe aussi mais s'est avéré insuffisant seul — le COPY --from=
+    # builder multi-étapes ne reporte pas fiablement la config persistée par
+    # `kc.sh build`) : "start-dev" ré-exécute de toute façon un build à
+    # chaque démarrage (voir logs "Updating the configuration..."), donc le
+    # repasser ici garantit que le provider de vault est bien actif —
+    # vérifier avec `kc.sh show-config | grep vault` après démarrage si le
+    # SMTP échoue avec une erreur d'authentification alors que les
+    # identifiants sont corrects.
+    command: ["start-dev", "--vault=file", "--import-realm", "--vault-dir=/opt/keycloak/vault"]
     environment:
-      KEYCLOAK_ADMIN: admin
-      KEYCLOAK_ADMIN_PASSWORD: admin
+      # KEYCLOAK_ADMIN/PASSWORD par défaut "admin"/"admin" conservés en
+      # fallback pour ne pas casser l'accès local existant, mais ce couple
+      # est trivial et committé en clair dans l'historique git — à changer
+      # via un .env AVANT toute exposition publique (voir audit sécurité).
+      # Comme pour Postgres, ce n'est lu par Keycloak qu'à la création du
+      # compte admin du realm "master" : changer la variable seule ne suffit
+      # pas sur une instance déjà démarrée, il faut aussi changer le mot de
+      # passe depuis la console admin (ou re-créer le volume).
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
       KC_DB: postgres
       KC_DB_URL: jdbc:postgresql://postgres:5432/educi_db
       KC_DB_USERNAME: educi_admin
-      KC_DB_PASSWORD: educi_admin_pwd
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:-educi_admin_pwd}
       KC_HOSTNAME_STRICT: "false"
       KC_HOSTNAME_STRICT_BACKCHANNEL: "false"
       KC_HOSTNAME_URL: "http://keycloak.local:8080"
       KC_HOSTNAME_ADMIN_URL: "http://keycloak.local:8080"
       KC_HTTP_ENABLED: "true"
+    # Doit rester publiquement joignable (le navigateur de l'utilisateur y
+    # est redirigé directement pour le login OIDC) — contrairement aux
+    # microservices internes ci-dessous. La console admin (/admin) est
+    # servie sur ce même port : voir note KEYCLOAK_ADMIN_PASSWORD ci-dessus
+    # et la note "start-dev" en bas de fichier pour la séparer proprement
+    # derrière un reverse proxy en production.
     ports: ["8080:8080"]
     volumes:
+      # Contient aussi eleve.demo/admin.demo (mots de passe en clair,
+      # committés dans git — conservés tels quels pour le dev en cours, ne
+      # PAS y toucher sur cet environnement) : voir keycloak/README.md pour
+      # la procédure de neutralisation/suppression avant un vrai déploiement.
       - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+      - ./keycloak/vault:/opt/keycloak/vault:ro
     depends_on:
       postgres: { condition: service_healthy }
     networks: [educi-net]
 
     # ---------- BACKEND MICROSERVICES (coquilles vides, Phase 0) ----------
+  # gateway est le SEUL point d'entrée censé être appelé depuis l'extérieur
+  # du réseau docker parmi les services ci-dessous (voir schéma en haut de
+  # ce fichier : frontend est l'EDGE, gateway n'est appelé que par lui,
+  # server-side — jamais depuis le navigateur, voir NEXT_PUBLIC_GATEWAY_URL
+  # inutilisé côté frontend). Son port reste néanmoins lié à 127.0.0.1 par
+  # défaut, comme les microservices internes ci-dessous : rien ne l'appelle
+  # via le port publié sur l'hôte en usage normal, seulement du debug local
+  # (curl depuis la machine hôte) — voir audit sécurité.
   gateway:
     build: ./gateway
     container_name: educi-gateway
-    ports: ["8000:8000"]
+    ports: ["127.0.0.1:8000:8000"]
     environment:
       KEYCLOAK_ISSUER: http://keycloak.local:8080/realms/educi
       KEYCLOAK_JWKS: http://keycloak:8080/realms/educi/protocol/openid-connect/certs
       AUTH_SERVICE_URL: http://auth-service:8081
-      CHAT_SERVICE_URL: http://host.docker.internal:8082
+      CHAT_SERVICE_URL: http://chat-service:8082
       ML_SERVICE_URL: http://ml-service:8086
     depends_on:
       keycloak: { condition: service_started }
     restart: unless-stopped
     networks: [educi-net]
-    extra_hosts:
-      - "host.docker.internal:host-gateway"  
+  # auth-service, chat-service, ml-service : microservices INTERNES,
+  # censés n'être joignables que depuis gateway via le réseau docker
+  # `educi-net` (nom de service, ex. http://chat-service:8082 ci-dessus).
+  # Ils font confiance sans re-vérification aux headers x-user-id/
+  # x-user-roles injectés par gateway (voir gateway/src/auth.js et
+  # isAdmin()/require_admin() dans chaque service) — d'où l'importance
+  # critique de NE JAMAIS les publier sur 0.0.0.0 : quiconque atteindrait
+  # ces ports directement pourrait usurper n'importe quel utilisateur (y
+  # compris admin) en forgeant ces headers, JWT ou pas. Liés à 127.0.0.1
+  # uniquement pour permettre le debug local (curl depuis l'hôte) sans les
+  # exposer au réseau/internet.
   auth-service:
     build: ./auth-service
     container_name: educi-auth-service
-    ports: ["8081:8081"]
+    ports: ["127.0.0.1:8081:8081"]
     environment:
-      DATABASE_URL: postgresql://educi_admin:educi_admin_pwd@postgres:5432/educi_db
+      DATABASE_URL: postgresql://educi_admin:${POSTGRES_PASSWORD:-educi_admin_pwd}@postgres:5432/educi_db
       KEYCLOAK_ISSUER: http://keycloak.local:8080/realms/educi
       KEYCLOAK_JWKS: http://keycloak:8080/realms/educi/protocol/openid-connect/certs
     depends_on:
@@ -148,10 +224,22 @@ services:
   chat-service:
     build: ./chat-service
     container_name: educi-chat-service
-    ports: ["8082:8082"]
+    ports: ["127.0.0.1:8082:8082"]
     environment:
-      DATABASE_URL: postgresql://educi_admin:educi_admin_pwd@postgres:5432/educi_db
+      DATABASE_URL: postgresql://educi_admin:${POSTGRES_PASSWORD:-educi_admin_pwd}@postgres:5432/educi_db
       GROQ_API_KEY: ${GROQ_API_KEY:-}
+      # Plafond TPM (tokens/minute) que groqClient.js utilise pour calculer
+      # max_tokens avant chaque appel — voir computeMaxTokens(). Compte passé
+      # au tier payant Groq le 2026-09-04 (250 000 tokens/min réels, vérifié
+      # via les en-têtes x-ratelimit-limit-tokens de l'API Groq elle-même,
+      # contre 8 000 sur le tier gratuit). 200 000 plutôt que 250 000 pour
+      # garder une marge de sécurité sous le vrai plafond, comme le fait déjà
+      # SAFETY_MARGIN pour l'estimation du prompt. Sans cette variable,
+      # groqClient.js retombe sur sa constante par défaut (8000, l'ancien
+      # plafond gratuit) et continue de brider les réponses (CHAT/QUIZ vides
+      # ou tronqués) même si Groq n'impose plus cette limite — voir l'audit
+      # RAG du 2026-09-04.
+      GROQ_TPM_LIMIT: ${GROQ_TPM_LIMIT:-200000}
       OLLAMA_URL: http://ollama:11434
       ML_SERVICE_URL: http://ml-service:8086
       KEYCLOAK_ISSUER: http://keycloak.local:8080/realms/educi
@@ -165,7 +253,7 @@ services:
   ml-service:
     build: ./ml-service
     container_name: educi-ml-service
-    ports: ["8086:8086"]
+    ports: ["127.0.0.1:8086:8086"]
     environment:
       QDRANT_URL: http://qdrant:6333
       OLLAMA_URL: http://ollama:11434
@@ -226,3 +314,51 @@ services:
     entrypoint: ["/bin/sh", "/bootstrap-ingest.sh"]
     networks: [educi-net]
     restart: "no"
+
+## ============================================================================
+## KEYCLOAK — passage de "start-dev" à "start" (mode production)
+## ============================================================================
+## Documenté ici volontairement SANS être appliqué : le choix dépend de
+## l'hébergement retenu (nom de domaine réel, qui termine le TLS — reverse
+## proxy/load balancer de l'hébergeur ou Keycloak lui-même). Voir audit
+## sécurité pour le contexte complet.
+##
+## Ce que "start-dev" fait EN PLUS de "start" (donc à retirer/adapter) :
+##   - Cache désactivé (pas de cluster, pas de perf de prod)
+##   - HTTP en clair autorisé sans avertissement (KC_HTTP_ENABLED: "true"
+##     actuellement) — "start" exige HTTPS par défaut sauf configuration
+##     explicite contraire
+##   - Rechargement à chaud de certaines configs — pas souhaitable en prod
+##   - Bannière "development mode" visible dans les logs et l'admin console
+##
+## Étapes pour passer en "start" :
+##   1. command: ["start", "--import-realm"] (ou retirer --import-realm après
+##      le premier démarrage — un import répété à chaque redémarrage n'est
+##      utile qu'en dev/CI).
+##   2. TLS — deux options selon l'hébergeur :
+##      a) Keycloak termine lui-même le TLS : fournir KC_HTTPS_CERTIFICATE_FILE
+##         / KC_HTTPS_CERTIFICATE_KEY_FILE (certificat réel, pas auto-signé,
+##         ex. Let's Encrypt) et retirer KC_HTTP_ENABLED.
+##      b) Un reverse proxy (nginx, Caddy, load balancer de l'hébergeur...)
+##         termine le TLS en amont : garder KC_HTTP_ENABLED mais ajouter
+##         KC_PROXY_HEADERS: "xforwarded" (ou "forwarded" selon le proxy) pour
+##         que Keycloak fasse confiance aux en-têtes X-Forwarded-* plutôt que
+##         de croire que la connexion entrante est en clair.
+##   3. Hostname — KC_HOSTNAME_STRICT: "false" actuel permet à Keycloak de
+##      deviner le hostname depuis la requête (pratique en dev avec
+##      keycloak.local, dangereux en prod : un attaquant peut forger un Host
+##      header et obtenir des liens/redirections empoisonnés). En prod :
+##        KC_HOSTNAME_STRICT: "true"
+##        KC_HOSTNAME: <domaine public réel, ex. auth.educi-platform.ci>
+##      et FAIRE CORRESPONDRE ce domaine à KEYCLOAK_ISSUER côté gateway/
+##      frontend (sinon la validation JWT échoue — l'issuer doit matcher
+##      exactement) et à la config OIDC du realm.
+##   4. Séparer la console admin (/admin) du trafic public si l'hébergeur le
+##      permet — ex. règle de reverse proxy qui bloque /admin/* sauf depuis
+##      un réseau interne/VPN, en complément (pas en remplacement) d'un vrai
+##      mot de passe admin fort (voir KEYCLOAK_ADMIN_PASSWORD plus haut).
+##   5. KC_DB_URL pointe vers le Postgres partagé du docker-compose ; en prod,
+##      envisager une base dédiée à Keycloak (séparation des risques — un
+##      compromis applicatif chat/auth-service n'expose pas alors les
+##      données d'identité).
+## ============================================================================
