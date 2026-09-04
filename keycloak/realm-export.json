@@ -44,11 +44,13 @@
       "redirectUris": [
         "http://localhost:3000/*",
         "http://localhost/*",
-        "http://localhost:8080/*"
+        "http://localhost:8080/*",
+        "http://167.86.116.14:3000/*"
       ],
       "webOrigins": [
         "http://localhost:3000",
         "http://localhost",
+        "http://167.86.116.14:3000",
         "+"
       ],
       "protocol": "openid-connect",
@@ -110,7 +112,7 @@
       "standardFlowEnabled": false,
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": true,
-      "secret": "f57ce78d47fcd08461abb47d030a2dd882311fa9c716bd69a5d6246b12cde0fc"
+      "secret": "${vault.adminclientsecret}"
     }
   ],
   "users": [

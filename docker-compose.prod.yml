@@ -1,0 +1,62 @@
+## ============================================================================
+## Override de production — usage :
+##   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+##
+## Ne contient QUE les différences avec docker-compose.yml (dev local) :
+##   - Keycloak en mode "start" (prod) au lieu de "start-dev", hostname
+##     strict pointé sur l'IP publique du serveur au lieu de keycloak.local.
+##   - KEYCLOAK_ISSUER (gateway/auth-service/chat-service/frontend) aligné
+##     sur ce même hostname — doit correspondre exactement à l'"iss" des
+##     tokens émis par Keycloak, sinon la validation JWT échoue partout.
+##   - NEXTAUTH_URL sur l'IP publique.
+##
+## PHASE TEMPORAIRE (pas de nom de domaine acheté pour l'instant) : tout
+## reste en HTTP simple (KC_HTTP_ENABLED), pas de TLS. Voir le README pour
+## les limites de sécurité de cette phase (accès restreint par pare-feu à
+## des IP spécifiques, pas de vrais comptes élèves). À remplacer par un
+## Caddyfile + domaine + KC_HOSTNAME=<domaine> dès qu'un nom de domaine est
+## disponible — chercher "IP_TEMPORAIRE" dans ce fichier pour tout ce qui
+## devra changer à ce moment-là.
+## ============================================================================
+
+services:
+  keycloak:
+    # "start" (prod) au lieu de "start-dev" : cache activé, pas de
+    # rechargement à chaud, bannière "development mode" retirée. Le realm
+    # est toujours importé au 1er démarrage (volume Postgres/Keycloak vierge
+    # sur ce serveur) ; --import-realm est un no-op silencieux sur les
+    # démarrages suivants (voir commentaire dans docker-compose.yml).
+    command: ["start", "--vault=file", "--import-realm", "--vault-dir=/opt/keycloak/vault"]
+    environment:
+      # IP_TEMPORAIRE : remplacer par https://<domaine> une fois le nom de
+      # domaine acheté et pointé (voir aussi gateway/auth-service/chat-service
+      # /frontend ci-dessous, qui doivent tous matcher exactement).
+      KC_HOSTNAME_URL: "http://167.86.116.14:8080"
+      KC_HOSTNAME_ADMIN_URL: "http://167.86.116.14:8080"
+      # "false" en dev (keycloak.local, pratique mais dangereux en prod : un
+      # Host header forgé peut empoisonner des liens/redirections) -> "true"
+      # ici, comme documenté dans docker-compose.yml.
+      KC_HOSTNAME_STRICT: "true"
+      KC_HOSTNAME_STRICT_BACKCHANNEL: "true"
+
+  gateway:
+    environment:
+      # IP_TEMPORAIRE — utilisé uniquement pour la comparaison de chaîne
+      # avec le claim "iss" des tokens (la vérification JWKS elle-même passe
+      # par le nom de service docker interne "keycloak:8080", inchangé).
+      KEYCLOAK_ISSUER: http://167.86.116.14:8080/realms/educi
+
+  auth-service:
+    environment:
+      KEYCLOAK_ISSUER: http://167.86.116.14:8080/realms/educi
+
+  chat-service:
+    environment:
+      KEYCLOAK_ISSUER: http://167.86.116.14:8080/realms/educi
+
+  frontend:
+    environment:
+      # IP_TEMPORAIRE (les 3 lignes ci-dessous)
+      NEXTAUTH_URL: http://167.86.116.14:3000
+      KEYCLOAK_ISSUER: http://167.86.116.14:8080/realms/educi
+      NEXT_PUBLIC_GATEWAY_URL: http://167.86.116.14:8000

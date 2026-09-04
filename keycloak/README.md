@@ -61,6 +61,19 @@ les commentaires à cet endroit, même logique de "committé en clair, à
 changer avant prod, la variable seule ne suffit pas sur une instance déjà
 initialisée".
 
+## Secret du client `educi-admin-service`
+
+Comme le mot de passe SMTP ci-dessous, ce secret est référencé dans
+`realm-export.json` via `${vault.adminclientsecret}` (jamais en clair) — le
+vrai secret vit dans `keycloak/vault/educi_adminclientsecret` (gitignored).
+Un premier secret avait été committé en clair dans `realm-export.json`
+(historique git jusqu'au commit qui a introduit la référence au vault) — il
+a été considéré compromis et remplacé, exactement comme pour
+`POSTGRES_PASSWORD`/`KEYCLOAK_ADMIN_PASSWORD` (voir audit sécurité et
+docker-compose.yml). Le frontend doit avoir la même valeur dans
+`KEYCLOAK_ADMIN_CLIENT_SECRET` (`.env`) — sans quoi l'API Admin Keycloak
+(page `/admin/users`) échoue en authentification.
+
 ## SMTP (envoi d'e-mails — vérification de compte, mot de passe oublié)
 
 Le realm `educi` est configuré pour envoyer ses e-mails (vérification
