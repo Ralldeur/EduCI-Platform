@@ -127,6 +127,7 @@
     {
       "username": "admin.demo",
       "email": "admin@educi.local",
+      "emailVerified": true,
       "enabled": true,
       "firstName": "Admin",
       "lastName": "Demo",
@@ -138,6 +139,7 @@
     {
       "username": "eleve.demo",
       "email": "eleve@educi.local",
+      "emailVerified": true,
       "enabled": true,
       "firstName": "Élève",
       "lastName": "Demo",
