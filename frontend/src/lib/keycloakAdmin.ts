@@ -8,12 +8,27 @@
 // KEYCLOAK_ISSUER est de la forme "http://keycloak.local:8080/realms/educi" ;
 // l'API Admin, elle, vit sous /admin/realms/{realm}/... (pas sous /realms/{realm}),
 // d'où l'extraction de KEYCLOAK_BASE_URL et REALM ci-dessous.
-const KEYCLOAK_ISSUER = process.env.KEYCLOAK_ISSUER!;
-const KEYCLOAK_BASE_URL = KEYCLOAK_ISSUER.replace(/\/realms\/[^/]+$/, "");
-const REALM = KEYCLOAK_ISSUER.split("/realms/")[1];
+//
+// Calculées à l'intérieur d'une fonction (pas au chargement du module) :
+// Next.js importe ce module pendant `next build` (analyse statique des
+// routes, "Collecting page data") SANS que le conteneur ait accès à un vrai
+// .env (voir .dockerignore — les secrets ne doivent pas faire partie du
+// contexte de build, voir audit sécurité). Un `process.env.KEYCLOAK_ISSUER!.
+// replace(...)` exécuté au top-level plantait donc le build dès que
+// KEYCLOAK_ISSUER était absent à ce moment-là, alors qu'il est bien défini
+// au runtime (docker-compose.yml). Ce module n'est de toute façon appelé que
+// côté serveur, jamais au moment du build.
+function getKeycloakBaseUrl(): string {
+  const issuer = process.env.KEYCLOAK_ISSUER!;
+  return issuer.replace(/\/realms\/[^/]+$/, "");
+}
+
+function getRealm(): string {
+  return process.env.KEYCLOAK_ISSUER!.split("/realms/")[1];
+}
 
 async function getServiceAccountToken(): Promise<string> {
-  const res = await fetch(`${KEYCLOAK_ISSUER}/protocol/openid-connect/token`, {
+  const res = await fetch(`${process.env.KEYCLOAK_ISSUER!}/protocol/openid-connect/token`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
@@ -39,7 +54,7 @@ async function getServiceAccountToken(): Promise<string> {
 export async function keycloakAdminFetch(path: string, init?: RequestInit): Promise<Response> {
   const token = await getServiceAccountToken();
 
-  return fetch(`${KEYCLOAK_BASE_URL}/admin/realms/${REALM}${path}`, {
+  return fetch(`${getKeycloakBaseUrl()}/admin/realms/${getRealm()}${path}`, {
     ...init,
     headers: { ...(init?.headers ?? {}), Authorization: `Bearer ${token}` },
   });

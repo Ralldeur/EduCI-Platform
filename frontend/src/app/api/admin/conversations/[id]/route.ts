@@ -26,6 +26,8 @@ interface ConversationDetailRow {
   created_at: string;
   updated_at: string;
   messages?: MessageRow[];
+  hasMore?: boolean;
+  totalMessages?: number;
 }
 
 function toMessage(row: MessageRow) {
@@ -47,6 +49,8 @@ function toConversation(row: ConversationDetailRow) {
     serie: row.serie,
     mode: row.mode,
     messages: (row.messages ?? []).map(toMessage),
+    hasMore: row.hasMore ?? false,
+    totalMessages: row.totalMessages ?? (row.messages ?? []).length,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -60,7 +64,13 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
   const { id } = await params;
 
-  const res = await fetch(`${GATEWAY_URL}/api/chat/admin/conversations/${id}`, {
+  // `before` : ISO timestamp du message le plus ancien déjà chargé côté
+  // client, pour remonter dans l'historique (voir chat-service::fetchMessagesPage).
+  const before = req.nextUrl.searchParams.get("before");
+  const url = new URL(`${GATEWAY_URL}/api/chat/admin/conversations/${id}`);
+  if (before) url.searchParams.set("before", before);
+
+  const res = await fetch(url, {
     headers: { Authorization: `Bearer ${admin.accessToken}` },
   });
 

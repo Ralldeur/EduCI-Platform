@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react";
 import { useParams } from "next/navigation";
 import ChatMessage from "@/components/chat/ChatMessage";
 import ChatInput from "@/components/chat/ChatInput";
@@ -17,18 +17,45 @@ export default function ConversationPage() {
   const [messages, setMessages] = useState<ChatMessageType[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingConv, setIsLoadingConv] = useState(true);
+  const [hasMoreMessages, setHasMoreMessages] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [subject, setSubject] = useState("");
   const [gradeLevel, setGradeLevel] = useState("");
   const [serie, setSerie] = useState("");
   const [convMode, setConvMode] = useState("CHAT");
   const [streamingContent, setStreamingContent] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  // Le chargement des messages précédents préfixe la liste : on ne veut pas
+  // que l'effet de scroll-vers-le-bas (ci-dessous) s'en mêle, la position est
+  // gérée par le useLayoutEffect ci-dessous pour ne pas perdre le scroll.
+  const skipNextAutoScrollRef = useRef(false);
+  // Hauteur du conteneur de scroll juste avant qu'une page de messages plus
+  // anciens soit préfixée ; non-null tant que le layout effect n'a pas encore
+  // corrigé scrollTop pour ce chargement. Volontairement pas un
+  // requestAnimationFrame : celui-ci ne se déclenche pas tant que l'onglet
+  // n'est pas au premier plan (visible/focus), ce qui laisserait la vue
+  // sauter en arrière-plan — un useLayoutEffect s'exécute de façon
+  // synchrone après le commit DOM, avant le paint, sans cette dépendance.
+  const pendingScrollRestoreRef = useRef<number | null>(null);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, []);
 
+  useLayoutEffect(() => {
+    if (pendingScrollRestoreRef.current !== null && scrollContainerRef.current) {
+      const container = scrollContainerRef.current;
+      container.scrollTop = container.scrollHeight - pendingScrollRestoreRef.current;
+      pendingScrollRestoreRef.current = null;
+    }
+  }, [messages]);
+
   useEffect(() => {
+    if (skipNextAutoScrollRef.current) {
+      skipNextAutoScrollRef.current = false;
+      return;
+    }
     scrollToBottom();
   }, [messages, streamingContent, scrollToBottom]);
 
@@ -40,6 +67,7 @@ export default function ConversationPage() {
         if (res.ok) {
           const data = await res.json();
           setMessages(data.messages ?? []);
+          setHasMoreMessages(data.hasMore ?? false);
           setSubject(data.subject ?? "");
           // Défensif : certaines conversations existantes ont pu être créées
           // avant la normalisation (gradeLevel stocké en texte libre style
@@ -58,6 +86,36 @@ export default function ConversationPage() {
 
     fetchConversation();
   }, [conversationId]);
+
+  const handleLoadMore = async () => {
+    if (isLoadingMore || messages.length === 0) return;
+
+    setIsLoadingMore(true);
+    const oldestCreatedAt = messages[0].createdAt;
+    const container = scrollContainerRef.current;
+    pendingScrollRestoreRef.current = container?.scrollHeight ?? 0;
+
+    try {
+      const res = await fetch(
+        `/api/conversations/${conversationId}?before=${encodeURIComponent(oldestCreatedAt)}`
+      );
+      if (!res.ok) {
+        pendingScrollRestoreRef.current = null;
+        toast.error("Erreur de chargement");
+        return;
+      }
+
+      const data = await res.json();
+      skipNextAutoScrollRef.current = true;
+      setMessages((prev) => [...(data.messages ?? []), ...prev]);
+      setHasMoreMessages(data.hasMore ?? false);
+    } catch {
+      pendingScrollRestoreRef.current = null;
+      toast.error("Erreur de chargement");
+    } finally {
+      setIsLoadingMore(false);
+    }
+  };
 
   const handleSubjectChange = async (value: string) => {
     setSubject(value);
@@ -206,21 +264,32 @@ export default function ConversationPage() {
       />
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto">
+      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto">
         {messages.length === 0 && !streamingContent ? (
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
-              <GraduationCap
-                size={48}
-                className="mx-auto mb-4 text-[var(--color-primary)] opacity-30"
-              />
-              <p className="text-[var(--color-muted)]">
+              <div className="w-12 h-12 rounded-[var(--radius-lg)] bg-[var(--color-primary-subtle)] flex items-center justify-center mx-auto mb-4">
+                <GraduationCap size={22} className="text-[var(--color-primary)]" />
+              </div>
+              <p className="text-sm text-[var(--color-muted)]">
                 Commence la conversation en posant une question !
               </p>
             </div>
           </div>
         ) : (
           <>
+            {hasMoreMessages && (
+              <div className="flex justify-center py-3">
+                <button
+                  type="button"
+                  onClick={handleLoadMore}
+                  disabled={isLoadingMore}
+                  className="text-xs font-medium text-[var(--color-muted)] hover:text-[var(--color-foreground)] disabled:opacity-50 cursor-pointer"
+                >
+                  {isLoadingMore ? "Chargement..." : "Charger les messages précédents"}
+                </button>
+              </div>
+            )}
             {messages.map((msg) => (
               <ChatMessage
                 key={msg.id}
@@ -236,13 +305,13 @@ export default function ConversationPage() {
               />
             )}
             {isLoading && !streamingContent && (
-              <div className="flex gap-3 px-4 py-5 md:px-8 bg-[var(--color-chat-assistant)]">
-                <div className="w-8 h-8 rounded-full bg-[var(--color-secondary)] text-white flex items-center justify-center flex-shrink-0">
-                  <Loader2 size={16} className="animate-spin" />
+              <div className="flex gap-3 px-4 py-4 md:px-8">
+                <div className="w-6 h-6 mt-0.5 rounded-[var(--radius-sm)] bg-[var(--color-primary-subtle)] flex items-center justify-center flex-shrink-0">
+                  <Loader2 size={13} className="animate-spin text-[var(--color-primary)]" />
                 </div>
                 <div className="flex items-center">
                   <p className="text-sm text-[var(--color-muted)]">
-                    Ivoir&apos;Académie réfléchit...
+                    EduCI réfléchit...
                   </p>
                 </div>
               </div>

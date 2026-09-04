@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Loader2 } from "lucide-react";
+import toast from "react-hot-toast";
 import ChatMessage from "@/components/chat/ChatMessage";
 import { getSubjectLabel, getGradeLevelLabel } from "@/lib/utils";
 import type { Conversation } from "@/types";
@@ -20,6 +21,15 @@ export default function AdminConversationDetailPage() {
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  // Hauteur du document + position de scroll juste avant qu'une page de
+  // messages plus anciens soit préfixée ; non-null tant que le layout effect
+  // n'a pas encore corrigé le scroll pour ce chargement. Volontairement pas
+  // un requestAnimationFrame : celui-ci ne se déclenche pas tant que l'onglet
+  // n'est pas au premier plan (visible/focus), ce qui laisserait la vue
+  // sauter en arrière-plan — un useLayoutEffect s'exécute de façon
+  // synchrone après le commit DOM, avant le paint, sans cette dépendance.
+  const pendingScrollRestoreRef = useRef<{ scrollHeight: number; scrollY: number } | null>(null);
 
   useEffect(() => {
     fetch(`/api/admin/conversations/${conversationId}`)
@@ -31,6 +41,48 @@ export default function AdminConversationDetailPage() {
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   }, [conversationId]);
+
+  // Cette page (contrairement à /chat) défile au niveau du document, pas
+  // d'un conteneur interne — on préserve donc la position via la hauteur du
+  // document plutôt qu'un scrollTop de conteneur.
+  useLayoutEffect(() => {
+    if (pendingScrollRestoreRef.current) {
+      const { scrollHeight, scrollY } = pendingScrollRestoreRef.current;
+      const newScrollHeight = document.documentElement.scrollHeight;
+      window.scrollTo(0, scrollY + (newScrollHeight - scrollHeight));
+      pendingScrollRestoreRef.current = null;
+    }
+  }, [conversation?.messages]);
+
+  const handleLoadMore = async () => {
+    if (isLoadingMore || !conversation || conversation.messages.length === 0) return;
+
+    setIsLoadingMore(true);
+    const oldestCreatedAt = conversation.messages[0].createdAt;
+    pendingScrollRestoreRef.current = {
+      scrollHeight: document.documentElement.scrollHeight,
+      scrollY: window.scrollY,
+    };
+
+    try {
+      const res = await fetch(
+        `/api/admin/conversations/${conversationId}?before=${encodeURIComponent(oldestCreatedAt)}`
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Erreur");
+
+      setConversation((prev) =>
+        prev
+          ? { ...prev, messages: [...data.messages, ...prev.messages], hasMore: data.hasMore }
+          : prev
+      );
+    } catch {
+      pendingScrollRestoreRef.current = null;
+      toast.error("Erreur de chargement des messages précédents");
+    } finally {
+      setIsLoadingMore(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -83,9 +135,23 @@ export default function AdminConversationDetailPage() {
             Cette conversation ne contient aucun message
           </p>
         ) : (
-          conversation.messages.map((msg) => (
-            <ChatMessage key={msg.id} content={msg.content} role={msg.role as "user" | "assistant"} />
-          ))
+          <>
+            {conversation.hasMore && (
+              <div className="flex justify-center py-3 border-b border-[var(--color-border)]">
+                <button
+                  type="button"
+                  onClick={handleLoadMore}
+                  disabled={isLoadingMore}
+                  className="text-sm text-[var(--color-primary)] hover:underline disabled:opacity-50"
+                >
+                  {isLoadingMore ? "Chargement..." : "Charger les messages précédents"}
+                </button>
+              </div>
+            )}
+            {conversation.messages.map((msg) => (
+              <ChatMessage key={msg.id} content={msg.content} role={msg.role as "user" | "assistant"} />
+            ))}
+          </>
         )}
       </div>
     </div>

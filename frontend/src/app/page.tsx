@@ -43,7 +43,7 @@ export default function HomePage() {
         <nav className="flex justify-between items-center mb-20">
           <div className="flex items-center gap-2">
             <GraduationCap size={32} className="text-[var(--color-primary)]" />
-            <span className="font-bold text-xl">Ivoir&apos;Académie</span>
+            <span className="font-bold text-xl">EduCI</span>
           </div>
           <div className="flex gap-3">
             <Link href="/login">
@@ -151,7 +151,7 @@ export default function HomePage() {
       {/* Footer */}
       <footer className="border-t border-[var(--color-border)] py-8">
         <p className="text-center text-sm text-[var(--color-muted)]">
-          &copy; {new Date().getFullYear()} Ivoir&apos;Académie — EdTech africaine propulsée par l&apos;IA
+          &copy; {new Date().getFullYear()} EduCI — EdTech africaine propulsée par l&apos;IA
         </p>
       </footer>
     </div>

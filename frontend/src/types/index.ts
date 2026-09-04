@@ -25,6 +25,9 @@ export interface Conversation {
   serie: string | null;
   mode: ConversationMode;
   messages: ChatMessage[];
+  /** true si des messages plus anciens que `messages[0]` existent encore. */
+  hasMore: boolean;
+  totalMessages: number;
   createdAt: string;
   updatedAt: string;
 }

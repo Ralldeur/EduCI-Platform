@@ -6,7 +6,7 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Ivoir'Académie - Assistant Éducatif IA",
+  title: "EduCI - Assistant Éducatif IA",
   description:
     "Plateforme éducative intelligente pour les élèves ivoiriens. Apprends avec l'IA selon le programme scolaire ivoirien.",
   keywords: [
