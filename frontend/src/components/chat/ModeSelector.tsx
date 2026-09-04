@@ -1,5 +1,6 @@
 "use client";
 
+import { GraduationCap, BookOpen, Target } from "lucide-react";
 import { SUBJECTS, GRADE_LEVELS, CYCLE_LABELS } from "@/lib/utils";
 import { LYCEE_SERIES } from "@/lib/curriculum";
 import Select from "@/components/ui/Select";
@@ -44,32 +45,35 @@ export default function ModeSelector({
   const isLycee = LYCEE_LEVELS.includes(gradeLevel);
 
   return (
-    <div className="flex flex-wrap gap-2 px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface)]">
-      <div className="w-48">
+    <div className="flex flex-wrap items-center gap-2 px-4 md:px-8 py-2.5 border-b border-[var(--color-border)] bg-[var(--color-background)]">
+      <div className="w-44 flex items-center gap-1.5">
+        <GraduationCap size={14} className="text-[var(--color-muted-subtle)] flex-shrink-0" />
         <Select
           value={gradeLevel}
           onChange={(e) => onGradeLevelChange(e.target.value)}
           options={gradeOptions}
-          placeholder="🎓 Niveau scolaire"
+          placeholder="Niveau scolaire"
           className="text-xs py-1.5"
         />
       </div>
-      <div className="w-48">
+      <div className="w-44 flex items-center gap-1.5">
+        <BookOpen size={14} className="text-[var(--color-muted-subtle)] flex-shrink-0" />
         <Select
           value={subject}
           onChange={(e) => onSubjectChange(e.target.value)}
           options={subjectOptions}
-          placeholder="📚 Matière"
+          placeholder="Matière"
           className="text-xs py-1.5"
         />
       </div>
       {isLycee && (
-        <div className="w-48">
+        <div className="w-44 flex items-center gap-1.5">
+          <Target size={14} className="text-[var(--color-muted-subtle)] flex-shrink-0" />
           <Select
             value={serie}
             onChange={(e) => onSerieChange(e.target.value)}
             options={serieOptions}
-            placeholder="🎯 Série (BAC)"
+            placeholder="Série (BAC)"
             className="text-xs py-1.5"
           />
         </div>

@@ -2,42 +2,88 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/*
+ * Système de design EduCI — voir DESIGN_SYSTEM.md à la racine de frontend/
+ * pour la documentation complète (palette, typographie, espacements,
+ * règles d'usage). Ce fichier ne contient QUE les tokens ; toute nouvelle
+ * couleur/rayon doit être ajoutée ici, jamais en valeur brute dans un
+ * composant.
+ */
 :root {
+  /* Neutres (surfaces + texte) — gris neutre, pas de teinte bleu-ardoise */
   --color-background: #ffffff;
-  --color-foreground: #0a0a0a;
-  --color-primary: #f97316;
-  --color-primary-dark: #ea580c;
-  --color-secondary: #10b981;
-  --color-accent: #3b82f6;
-  --color-surface: #f8fafc;
-  --color-surface-hover: #f1f5f9;
-  --color-border: #e2e8f0;
-  --color-muted: #64748b;
-  --color-sidebar: #f8fafc;
-  --color-chat-user: #fff7ed;
-  --color-chat-assistant: #ffffff;
+  --color-surface: #f7f7f8;
+  --color-surface-raised: #ffffff;
+  --color-surface-hover: #eeeef0;
+  --color-border: #e4e4e7;
+  --color-border-strong: #d4d4d8;
+  --color-foreground: #18181b;
+  --color-muted: #6b6b70;
+  --color-muted-subtle: #a1a1a6;
+
+  /* Accent unique (marque EduCI) — plus d'accent bleu/vert concurrents */
+  --color-primary: #c2661f;
+  --color-primary-hover: #a8551a;
+  --color-primary-subtle: rgba(194, 102, 31, 0.1);
+  --color-primary-foreground: #ffffff;
+
+  /* Sémantique (usage restreint : erreurs/destructif uniquement) */
+  --color-danger: #d33d3d;
+  --color-danger-subtle: rgba(211, 61, 61, 0.1);
+  --color-success: #2f8f5b;
+
+  /* Alias rétro-compatibles (composants pas encore migrés) */
+  --color-secondary: var(--color-primary);
+  --color-accent: var(--color-primary);
+  --color-sidebar: var(--color-surface);
+  --color-chat-user: var(--color-surface-raised);
+  --color-chat-assistant: var(--color-background);
+
+  /* Rayons — échelle resserrée (style "outil pro", pas "app ludique") */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+
+  /* Ombres — juste assez pour détacher un popover, jamais un gros drop-shadow */
+  --shadow-sm: 0 1px 2px rgba(24, 24, 27, 0.06);
+  --shadow-md: 0 4px 16px rgba(24, 24, 27, 0.1);
 }
 
 .dark {
-  --color-background: #0f172a;
-  --color-foreground: #f8fafc;
-  --color-primary: #fb923c;
-  --color-primary-dark: #f97316;
-  --color-secondary: #34d399;
-  --color-accent: #60a5fa;
-  --color-surface: #1e293b;
-  --color-surface-hover: #334155;
-  --color-border: #334155;
-  --color-muted: #94a3b8;
-  --color-sidebar: #1e293b;
-  --color-chat-user: #1c1917;
-  --color-chat-assistant: #1e293b;
+  --color-background: #0a0a0b;
+  --color-surface: #111113;
+  --color-surface-raised: #17171a;
+  --color-surface-hover: #202024;
+  --color-border: #232327;
+  --color-border-strong: #313136;
+  --color-foreground: #ededef;
+  --color-muted: #93939b;
+  --color-muted-subtle: #5c5c63;
+
+  --color-primary: #dd8544;
+  --color-primary-hover: #e89757;
+  --color-primary-subtle: rgba(221, 133, 68, 0.14);
+  --color-primary-foreground: #17110b;
+
+  --color-danger: #e5696c;
+  --color-danger-subtle: rgba(229, 105, 108, 0.14);
+  --color-success: #4ec98a;
+
+  --color-secondary: var(--color-primary);
+  --color-accent: var(--color-primary);
+  --color-sidebar: var(--color-surface);
+  --color-chat-user: var(--color-surface-raised);
+  --color-chat-assistant: var(--color-background);
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.45);
 }
 
 body {
   background: var(--color-background);
   color: var(--color-foreground);
   font-family: "Inter", system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
 
 /* Custom scrollbar */
@@ -50,67 +96,95 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--color-border);
+  background: var(--color-border-strong);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--color-muted);
+  background: var(--color-muted-subtle);
 }
 
 /* Markdown styles in chat */
 .prose-chat h1,
 .prose-chat h2,
 .prose-chat h3 {
-  font-weight: 700;
-  margin-top: 1em;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin-top: 1.1em;
   margin-bottom: 0.5em;
 }
 
-.prose-chat h1 { font-size: 1.25rem; }
-.prose-chat h2 { font-size: 1.125rem; }
+.prose-chat h1 { font-size: 1.2rem; }
+.prose-chat h2 { font-size: 1.1rem; }
 .prose-chat h3 { font-size: 1rem; }
 
 .prose-chat p {
-  margin-bottom: 0.5em;
+  margin-bottom: 0.75em;
 }
 
 .prose-chat ul,
 .prose-chat ol {
-  margin-left: 1.5em;
-  margin-bottom: 0.5em;
+  margin-left: 1.4em;
+  margin-bottom: 0.6em;
 }
 
 .prose-chat li {
-  margin-bottom: 0.25em;
+  margin-bottom: 0.4em;
+}
+
+/* Formules KaTeX : une ligne contenant une fraction (inline ou display) est
+   plus haute qu'une ligne de texte normale. Sans line-height dédié, les
+   lignes se chevauchent visuellement dès qu'une formule s'empile sur une
+   autre ou sur une ligne d'étape ("Étape 2 : ..."). */
+.prose-chat p:has(.katex),
+.prose-chat li:has(.katex) {
+  line-height: 2.1;
+}
+
+.prose-chat .katex-display {
+  margin: 1.25em 0;
+  padding: 0.15em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.prose-chat .katex-display:first-child {
+  margin-top: 0;
+}
+
+.prose-chat .katex-display:last-child {
+  margin-bottom: 0;
 }
 
 .prose-chat code {
-  background: var(--color-surface);
+  background: var(--color-surface-hover);
+  border: 1px solid var(--color-border);
   padding: 0.125em 0.375em;
-  border-radius: 0.25em;
+  border-radius: var(--radius-sm);
   font-size: 0.875em;
 }
 
 .prose-chat pre {
   background: var(--color-surface);
+  border: 1px solid var(--color-border);
   padding: 1em;
-  border-radius: 0.5em;
+  border-radius: var(--radius-md);
   overflow-x: auto;
   margin-bottom: 0.75em;
 }
 
 .prose-chat pre code {
   background: transparent;
+  border: none;
   padding: 0;
 }
 
 .prose-chat strong {
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .prose-chat blockquote {
-  border-left: 3px solid var(--color-primary);
+  border-left: 2px solid var(--color-border-strong);
   padding-left: 1em;
   margin-bottom: 0.75em;
   color: var(--color-muted);
@@ -131,6 +205,6 @@ body {
 /* Smooth transitions */
 * {
   transition-property: background-color, border-color, color;
-  transition-duration: 200ms;
+  transition-duration: 150ms;
   transition-timing-function: ease-in-out;
 }
