@@ -286,6 +286,11 @@ services:
       KEYCLOAK_CLIENT_ID: educi-frontend
       KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-}
       KEYCLOAK_ISSUER: http://keycloak.local:8080/realms/educi
+      # Voir le commentaire détaillé dans frontend/src/lib/auth.ts : appels
+      # serveur-à-serveur (échange de code, userinfo, JWKS) toujours via le
+      # nom de service docker, jamais via KEYCLOAK_ISSUER — même valeur en
+      # dev et en prod, pas besoin de l'overrider dans docker-compose.prod.yml.
+      KEYCLOAK_INTERNAL_ISSUER: http://keycloak:8080/realms/educi
       # Compte de service dédié à l'API Admin Keycloak (page /admin/users),
       # distinct du client "educi-frontend" ci-dessus — voir
       # cahier-des-charges-admin.md.

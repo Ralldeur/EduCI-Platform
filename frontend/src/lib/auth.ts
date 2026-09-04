@@ -11,14 +11,30 @@ import type { NextRequest } from "next/server";
 // Variables d'environnement requises (voir .env.example) :
 //   KEYCLOAK_CLIENT_ID     — "educi-frontend" (client public, PKCE)
 //   KEYCLOAK_CLIENT_SECRET — vide/non utilisé pour un client public.
-//   KEYCLOAK_ISSUER        — "http://keycloak.local:8080/realms/educi".
-//                            Résoluble à l'identique par le NAVIGATEUR (via
-//                            l'entrée `keycloak.local` du fichier hosts) et
-//                            par le conteneur frontend (via `extra_hosts:
-//                            keycloak.local:host-gateway` dans
-//                            docker-compose.yml) — plus besoin de distinguer
-//                            une URL publique d'une URL interne Docker.
+//   KEYCLOAK_ISSUER        — valeur PUBLIQUE (ex. "http://keycloak.local:8080
+//                            /realms/educi" en dev, IP ou domaine du serveur
+//                            en prod) : sert de claim "iss" pour la
+//                            validation des tokens ET d'URL vers laquelle le
+//                            NAVIGATEUR est redirigé pour se connecter — doit
+//                            donc être joignable depuis le poste de
+//                            l'utilisateur, pas seulement depuis le serveur.
+//   KEYCLOAK_INTERNAL_ISSUER — adresse interne au réseau docker
+//                            ("http://keycloak:8080/realms/educi"), utilisée
+//                            uniquement pour les appels serveur-à-serveur
+//                            (échange du code OAuth, userinfo, JWKS). Sans
+//                            cette distinction, next-auth tenterait ces
+//                            appels vers KEYCLOAK_ISSUER : ça fonctionne en
+//                            dev (extra_hosts route keycloak.local vers
+//                            l'hôte), mais échoue en prod sur un serveur qui
+//                            ne route pas le "hairpin NAT" (un conteneur ne
+//                            peut alors pas se reconnecter à l'IP publique de
+//                            sa propre machine) — repéré au déploiement
+//                            Contabo du 2026-09-05 (page d'accueil qui reste
+//                            bloquée en chargement, la requête serveur vers
+//                            l'IP publique:8080 expirant en timeout).
 const KEYCLOAK_ISSUER = process.env.KEYCLOAK_ISSUER!;
+const KEYCLOAK_INTERNAL_ISSUER =
+  process.env.KEYCLOAK_INTERNAL_ISSUER || KEYCLOAK_ISSUER;
 
 // Forme du profil OIDC renvoyé par Keycloak, avec les claims personnalisés
 // exposés via les protocol mappers du realm (voir keycloak/realm-export.json).
@@ -50,7 +66,7 @@ interface KeycloakTokenResponse {
  */
 async function refreshAccessToken(token: JWT): Promise<JWT> {
   try {
-    const url = `${KEYCLOAK_ISSUER}/protocol/openid-connect/token`;
+    const url = `${KEYCLOAK_INTERNAL_ISSUER}/protocol/openid-connect/token`;
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -92,6 +108,16 @@ export const authOptions: NextAuthOptions = {
       clientId: process.env.KEYCLOAK_CLIENT_ID!,
       clientSecret: process.env.KEYCLOAK_CLIENT_SECRET ?? "",
       issuer: KEYCLOAK_ISSUER,
+      // Découverte OIDC désactivée : on fixe nous-mêmes chaque endpoint pour
+      // distinguer ce qui doit rester public (authorization, atteint par le
+      // navigateur) de ce qui peut/doit passer par le réseau docker interne
+      // (token/userinfo/jwks, appelés serveur-à-serveur) — voir le
+      // commentaire sur KEYCLOAK_INTERNAL_ISSUER plus haut.
+      wellKnown: undefined,
+      authorization: `${KEYCLOAK_ISSUER}/protocol/openid-connect/auth`,
+      token: `${KEYCLOAK_INTERNAL_ISSUER}/protocol/openid-connect/token`,
+      userinfo: `${KEYCLOAK_INTERNAL_ISSUER}/protocol/openid-connect/userinfo`,
+      jwks_endpoint: `${KEYCLOAK_INTERNAL_ISSUER}/protocol/openid-connect/certs`,
     }),
   ],
   session: {
