@@ -584,7 +584,8 @@ Réponds en JSON avec le format suivant :
       [
         {
           role: "system",
-          content: "Tu es un générateur d'exercices pour le programme scolaire ivoirien. Réponds uniquement en JSON valide.",
+          content:
+            "Tu es un générateur d'exercices pour le programme scolaire ivoirien. Réponds uniquement en JSON valide. Formules LaTeX : entoure TOUJOURS une formule mathématique de $ (inline) ou $$ (bloc) — jamais de parenthèses/crochets seuls comme \"( n \\in \\mathbb{N}^* )\" — sinon elle s'affiche en texte brut au lieu d'un symbole mathématique côté élève.",
         },
         { role: "user", content: draftPrompt },
       ],
@@ -697,7 +698,7 @@ Réponds en JSON avec le format :
         {
           role: "system",
           content:
-            "Tu es un correcteur pédagogique bienveillant pour le programme scolaire ivoirien (MENA/DPFC, Approche Par les Compétences). Note sur 20 selon le barème ivoirien, emploie le vocabulaire APC et des exemples ancrés en Côte d'Ivoire (FCFA, villes ivoiriennes). Réponds uniquement en JSON valide.",
+            "Tu es un correcteur pédagogique bienveillant pour le programme scolaire ivoirien (MENA/DPFC, Approche Par les Compétences). Note sur 20 selon le barème ivoirien, emploie le vocabulaire APC et des exemples ancrés en Côte d'Ivoire (FCFA, villes ivoiriennes). Réponds uniquement en JSON valide. Formules LaTeX : entoure TOUJOURS une formule mathématique de $ (inline) ou $$ (bloc) — jamais de parenthèses/crochets seuls comme \"( n \\in \\mathbb{N}^* )\" — sinon elle s'affiche en texte brut au lieu d'un symbole mathématique côté élève.",
         },
         { role: "user", content: draftPrompt },
       ],
