@@ -132,12 +132,18 @@ body {
   margin-bottom: 0.4em;
 }
 
-/* Formules KaTeX : une ligne contenant une fraction (inline ou display) est
+/* Formules KaTeX : une ligne contenant une FRACTION (inline ou display) est
    plus haute qu'une ligne de texte normale. Sans line-height dédié, les
    lignes se chevauchent visuellement dès qu'une formule s'empile sur une
-   autre ou sur une ligne d'étape ("Étape 2 : ..."). */
-.prose-chat p:has(.katex),
-.prose-chat li:has(.katex) {
+   autre ou sur une ligne d'étape ("Étape 2 : ..."). Ciblé sur .mfrac
+   (classe KaTeX du numérateur/dénominateur) plutôt que sur .katex en
+   général : une formule inline simple comme "$f(x)$" (très fréquente dans
+   les exercices) n'a pas ce risque de chevauchement et n'a donc pas besoin
+   d'un interligne aussi généreux — un ciblage trop large rendait le texte
+   des exercices anormalement aéré (repéré à l'audit mobile du 2026-09-05).
+*/
+.prose-chat p:has(.katex .mfrac),
+.prose-chat li:has(.katex .mfrac) {
   line-height: 2.1;
 }
 

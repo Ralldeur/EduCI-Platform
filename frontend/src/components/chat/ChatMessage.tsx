@@ -1,11 +1,13 @@
 "use client";
 
+import { useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import { cn } from "@/lib/utils";
+import { normalizeMathContent, useFitKatexDisplays } from "@/lib/markdown";
 import { Sparkles } from "lucide-react";
 
 interface ChatMessageProps {
@@ -14,40 +16,17 @@ interface ChatMessageProps {
   isStreaming?: boolean;
 }
 
-/**
- * Le modèle écrit souvent les formules bloc sur une seule ligne
- * ("$$\frac{a}{b}$$"). remark-math ne reconnaît le mode "display" que si
- * $$ est isolé sur ses propres lignes (comme un fence de code) ; sinon il
- * traite la formule comme du math inline en style compact, ce qui rend les
- * fractions empilées illisibles. On force donc chaque bloc $$...$$ sur ses
- * propres lignes avant de passer le contenu à ReactMarkdown.
- */
-function normalizeDisplayMath(text: string): string {
-  return text.replace(
-    /\$\$([\s\S]+?)\$\$/g,
-    (_, formula: string) => `\n\n$$\n${formula.trim()}\n$$\n\n`
-  );
-}
-
-/**
- * \frac utilise le style "cramped" de TeX pour son dénominateur : quand ce
- * dénominateur porte un exposant (ex. "0^+" pour une limite à droite), le
- * signe touche/chevauche la barre de fraction, surtout en math inline où
- * l'espacement est déjà compact. \dfrac force le style "display" (pleine
- * taille, non compact) partout, y compris en inline, ce qui règle ce
- * chevauchement sans rien changer visuellement là où \frac était déjà
- * correct.
- */
-function forceDisplayFractions(text: string): string {
-  return text.replace(/\\frac(?=\{)/g, "\\dfrac");
-}
-
 export default function ChatMessage({
   content,
   role,
   isStreaming,
 }: ChatMessageProps) {
   const isUser = role === "user";
+  const contentRef = useRef<HTMLDivElement>(null);
+  // Re-mesure après chaque mise à jour du texte (y compris pendant le
+  // streaming, une fois une formule complète reçue) et à chaque
+  // redimensionnement — voir fitKatexDisplaysToWidth() dans lib/markdown.ts.
+  useFitKatexDisplays(contentRef, [content]);
 
   if (isUser) {
     return (
@@ -71,13 +50,14 @@ export default function ChatMessage({
           EduCI
         </p>
         <div
+          ref={contentRef}
           className={cn(
             "prose-chat text-[15px] leading-relaxed text-[var(--color-foreground)]",
             isStreaming && "typing-cursor"
           )}
         >
           <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>
-            {forceDisplayFractions(normalizeDisplayMath(content))}
+            {normalizeMathContent(content)}
           </ReactMarkdown>
         </div>
       </div>
