@@ -114,7 +114,7 @@ export default function AdminLessonsPage() {
 
       <form
         onSubmit={handleSubmit}
-        className="p-6 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] max-w-2xl"
+        className="p-6 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] max-w-2xl"
       >
         <h2 className="font-semibold mb-4 flex items-center gap-2">
           <Upload size={18} />
@@ -156,7 +156,7 @@ export default function AdminLessonsPage() {
               accept=".pdf,.txt,.md,.docx"
               onChange={(e) => setFile(e.target.files?.[0] ?? null)}
               required
-              className="w-full text-sm file:mr-3 file:px-3 file:py-2 file:rounded-lg file:border-0 file:bg-[var(--color-primary)] file:text-white file:text-sm file:font-medium file:cursor-pointer"
+              className="w-full text-sm file:mr-3 file:px-3 file:py-2 file:rounded-[var(--radius-md)] file:border-0 file:bg-[var(--color-primary)] file:text-white file:text-sm file:font-medium file:cursor-pointer"
             />
           </div>
 
@@ -173,7 +173,7 @@ export default function AdminLessonsPage() {
         </div>
       </form>
 
-      <div className="mt-8 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+      <div className="mt-8 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
         <div className="p-6 pb-0">
           <h2 className="font-semibold mb-4 flex items-center gap-2">
             <FileText size={18} />
@@ -220,7 +220,7 @@ export default function AdminLessonsPage() {
                       <button
                         onClick={() => handleDelete(doc)}
                         disabled={deletingSource === doc.source}
-                        className="p-1.5 rounded hover:bg-red-500/10 hover:text-red-500 text-[var(--color-muted)] transition-colors cursor-pointer disabled:opacity-50"
+                        className="p-1.5 rounded-[var(--radius-sm)] hover:bg-[var(--color-danger-subtle)] hover:text-[var(--color-danger)] text-[var(--color-muted)] transition-colors cursor-pointer disabled:opacity-50"
                         title="Supprimer ce document"
                       >
                         {deletingSource === doc.source ? (

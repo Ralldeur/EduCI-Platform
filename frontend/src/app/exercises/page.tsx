@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import {
@@ -14,7 +14,9 @@ import Button from "@/components/ui/Button";
 import Select from "@/components/ui/Select";
 import { SUBJECTS, ALL_GRADE_LEVELS } from "@/lib/utils";
 import { LYCEE_SERIES } from "@/lib/curriculum";
+import { normalizeMathContent, useFitKatexDisplays } from "@/lib/markdown";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
@@ -54,6 +56,12 @@ export default function ExercisesPage() {
   >({});
   const [correcting, setCorrecting] = useState<number | null>(null);
   const [showAnswers, setShowAnswers] = useState<Record<number, boolean>>({});
+  const pageRef = useRef<HTMLDivElement>(null);
+  // Voir ChatMessage.tsx / lib/markdown.ts : mêmes formules, même correctif.
+  // Dépend aussi de showAnswers/corrections (pas seulement exercises) : ces
+  // sections sont rendues conditionnellement, donc de nouveaux blocs KaTeX
+  // apparaissent dans le DOM à chaque révélation, sans changement d'exercises.
+  useFitKatexDisplays(pageRef, [exercises, showAnswers, corrections]);
 
   if (status === "unauthenticated") {
     router.push("/login");
@@ -135,7 +143,7 @@ export default function ExercisesPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[var(--color-background)]">
+    <div ref={pageRef} className="min-h-screen bg-[var(--color-background)]">
       <div className="max-w-4xl mx-auto px-4 py-8">
         <div className="flex items-center gap-3 mb-8">
           <Link href="/chat">
@@ -148,7 +156,7 @@ export default function ExercisesPage() {
         </div>
 
         {/* Generation form */}
-        <div className="p-6 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] mb-8">
+        <div className="p-6 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] mb-8">
           <h2 className="font-semibold mb-4">Générer des exercices</h2>
           <div className="grid sm:grid-cols-2 gap-4 mb-4">
             <Select
@@ -213,7 +221,7 @@ export default function ExercisesPage() {
               value={topic}
               onChange={(e) => setTopic(e.target.value)}
               placeholder="Ex: Les fractions, Le théorème de Pythagore..."
-              className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-foreground)] placeholder:text-[var(--color-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] text-sm"
+              className="w-full px-3 py-2 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-foreground)] placeholder:text-[var(--color-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] text-sm"
             />
           </div>
           <Button
@@ -236,7 +244,7 @@ export default function ExercisesPage() {
         {exercises.map((exercise, i) => (
           <div
             key={i}
-            className="p-6 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] mb-4"
+            className="p-6 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] mb-4"
           >
             <div className="flex items-center gap-2 mb-3">
               <span className="w-7 h-7 rounded-full bg-[var(--color-primary)] text-white flex items-center justify-center text-sm font-bold">
@@ -246,8 +254,8 @@ export default function ExercisesPage() {
             </div>
 
             <div className="prose-chat text-sm mb-4">
-              <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-                {exercise.question}
+              <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>
+                {normalizeMathContent(exercise.question)}
               </ReactMarkdown>
             </div>
 
@@ -256,7 +264,7 @@ export default function ExercisesPage() {
                 {exercise.options.map((opt, j) => (
                   <label
                     key={j}
-                    className="flex items-center gap-2 p-2 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-surface-hover)] cursor-pointer text-sm"
+                    className="flex items-center gap-2 p-2 rounded-[var(--radius-md)] border border-[var(--color-border)] hover:bg-[var(--color-surface-hover)] cursor-pointer text-sm"
                   >
                     <input
                       type="radio"
@@ -283,7 +291,7 @@ export default function ExercisesPage() {
                 }
                 placeholder="Écris ta réponse ici..."
                 rows={3}
-                className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-foreground)] placeholder:text-[var(--color-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] text-sm resize-none mb-4"
+                className="w-full px-3 py-2 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-foreground)] placeholder:text-[var(--color-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] text-sm resize-none mb-4"
               />
             )}
 
@@ -315,36 +323,40 @@ export default function ExercisesPage() {
             </div>
 
             {showAnswers[i] && (
-              <div className="mt-3 p-3 rounded-lg bg-[var(--color-secondary)]/10 border border-[var(--color-secondary)]/20 text-sm">
-                <p className="font-medium text-[var(--color-secondary)] mb-1">
+              <div className="mt-3 p-3 rounded-[var(--radius-md)] bg-[var(--color-primary-subtle)] border border-[var(--color-primary)]/20 text-sm">
+                <p className="font-medium text-[var(--color-primary)] mb-1">
                   Réponse :
                 </p>
-                <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-                  {exercise.answer}
-                </ReactMarkdown>
+                <div className="prose-chat text-sm">
+                  <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>
+                    {normalizeMathContent(exercise.answer)}
+                  </ReactMarkdown>
+                </div>
                 {exercise.explanation && (
                   <>
-                    <p className="font-medium text-[var(--color-secondary)] mt-2 mb-1">
+                    <p className="font-medium text-[var(--color-primary)] mt-2 mb-1">
                       Explication :
                     </p>
-                    <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-                      {exercise.explanation}
-                    </ReactMarkdown>
+                    <div className="prose-chat text-sm">
+                      <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>
+                        {normalizeMathContent(exercise.explanation)}
+                      </ReactMarkdown>
+                    </div>
                   </>
                 )}
               </div>
             )}
 
             {corrections[i] && (
-              <div className="mt-3 p-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-background)]">
+              <div className="mt-3 p-4 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-background)]">
                 <div className="flex items-center gap-2 mb-3">
                   {corrections[i].score >= 10 ? (
                     <CheckCircle
                       size={20}
-                      className="text-[var(--color-secondary)]"
+                      className="text-[var(--color-success)]"
                     />
                   ) : (
-                    <XCircle size={20} className="text-red-500" />
+                    <XCircle size={20} className="text-[var(--color-danger)]" />
                   )}
                   <span className="font-bold text-lg">
                     {corrections[i].score}/20
@@ -353,7 +365,7 @@ export default function ExercisesPage() {
                 <p className="text-sm mb-2">{corrections[i].feedback}</p>
                 {corrections[i].positives?.length > 0 && (
                   <div className="mb-2">
-                    <p className="text-xs font-medium text-[var(--color-secondary)] mb-1">
+                    <p className="text-xs font-medium text-[var(--color-success)] mb-1">
                       Points positifs :
                     </p>
                     <ul className="text-xs space-y-0.5">
@@ -365,7 +377,7 @@ export default function ExercisesPage() {
                 )}
                 {corrections[i].errors?.length > 0 && (
                   <div className="mb-2">
-                    <p className="text-xs font-medium text-red-500 mb-1">
+                    <p className="text-xs font-medium text-[var(--color-danger)] mb-1">
                       Erreurs :
                     </p>
                     <ul className="text-xs space-y-0.5">
@@ -377,7 +389,7 @@ export default function ExercisesPage() {
                 )}
                 {corrections[i].tips?.length > 0 && (
                   <div>
-                    <p className="text-xs font-medium text-[var(--color-accent)] mb-1">
+                    <p className="text-xs font-medium text-[var(--color-muted)] mb-1">
                       Conseils :
                     </p>
                     <ul className="text-xs space-y-0.5">

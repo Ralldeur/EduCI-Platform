@@ -25,10 +25,10 @@ export default function AdminDashboard() {
   }
 
   const cards = [
-    { icon: Users, label: "Utilisateurs", value: stats.totalUsers, color: "text-blue-500" },
-    { icon: MessageSquare, label: "Conversations", value: stats.totalConversations, color: "text-green-500" },
-    { icon: MessageCircle, label: "Messages", value: stats.totalMessages, color: "text-purple-500" },
-    { icon: Database, label: "Documents indexés (RAG)", value: stats.totalDocuments, color: "text-orange-500" },
+    { icon: Users, label: "Utilisateurs", value: stats.totalUsers },
+    { icon: MessageSquare, label: "Conversations", value: stats.totalConversations },
+    { icon: MessageCircle, label: "Messages", value: stats.totalMessages },
+    { icon: Database, label: "Documents indexés (RAG)", value: stats.totalDocuments },
   ];
 
   return (
@@ -39,9 +39,9 @@ export default function AdminDashboard() {
         {cards.map((card, i) => (
           <div
             key={i}
-            className="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]"
+            className="p-4 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)]"
           >
-            <card.icon size={20} className={card.color} />
+            <card.icon size={20} className="text-[var(--color-muted)]" />
             <p className="text-2xl font-bold mt-2">{card.value}</p>
             <p className="text-xs text-[var(--color-muted)]">{card.label}</p>
           </div>

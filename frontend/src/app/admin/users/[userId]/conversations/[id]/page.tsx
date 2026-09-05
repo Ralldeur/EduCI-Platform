@@ -102,7 +102,7 @@ export default function AdminConversationDetailPage() {
           <ArrowLeft size={14} />
           Retour aux conversations
         </Link>
-        <p className="text-sm text-red-500">{error ?? "Conversation introuvable"}</p>
+        <p className="text-sm text-[var(--color-danger)]">{error ?? "Conversation introuvable"}</p>
       </div>
     );
   }
@@ -129,7 +129,7 @@ export default function AdminConversationDetailPage() {
         {" · Lecture seule"}
       </p>
 
-      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+      <div className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
         {conversation.messages.length === 0 ? (
           <p className="text-center py-8 text-sm text-[var(--color-muted)]">
             Cette conversation ne contient aucun message

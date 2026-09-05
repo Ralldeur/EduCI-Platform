@@ -16,10 +16,14 @@ interface UserInfo {
   createdAt: string | null;
 }
 
+// Un seul accent par écran (voir DESIGN_SYSTEM.md) : ROLE_ADMIN est le seul
+// rôle mis en avant avec `primary` (c'est celui qu'un admin consultant cette
+// liste a besoin de repérer en un coup d'œil) ; les autres restent neutres
+// plutôt que d'utiliser plusieurs couleurs concurrentes pour "décorer".
 const ROLE_STYLES: Record<string, string> = {
-  ROLE_ADMIN: "bg-purple-500/10 text-purple-500",
-  ROLE_TEACHER: "bg-orange-500/10 text-orange-500",
-  ROLE_STUDENT: "bg-blue-500/10 text-blue-500",
+  ROLE_ADMIN: "bg-[var(--color-primary-subtle)] text-[var(--color-primary)]",
+  ROLE_TEACHER: "bg-[var(--color-surface-hover)] text-[var(--color-foreground)]",
+  ROLE_STUDENT: "bg-[var(--color-surface-hover)] text-[var(--color-foreground)]",
 };
 
 export default function AdminUsersPage() {
@@ -46,7 +50,7 @@ export default function AdminUsersPage() {
     <div>
       <h1 className="text-2xl font-bold mb-6">Utilisateurs</h1>
 
-      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+      <div className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -71,7 +75,8 @@ export default function AdminUsersPage() {
                         <span
                           key={role}
                           className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                            ROLE_STYLES[role] ?? "bg-gray-500/10 text-gray-500"
+                            ROLE_STYLES[role] ??
+                            "bg-[var(--color-surface-hover)] text-[var(--color-muted)]"
                           }`}
                         >
                           {role}
@@ -89,7 +94,7 @@ export default function AdminUsersPage() {
                   <td className="px-4 py-3 text-right">
                     <Link
                       href={`/admin/users/${user.id}/conversations?name=${encodeURIComponent(user.name ?? user.username)}`}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium text-[var(--color-primary)] hover:bg-[var(--color-surface-hover)] transition-colors"
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-[var(--radius-md)] text-xs font-medium text-[var(--color-primary)] hover:bg-[var(--color-surface-hover)] transition-colors"
                       title="Consulter les conversations"
                     >
                       <MessageSquare size={14} />

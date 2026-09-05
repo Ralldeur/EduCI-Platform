@@ -52,9 +52,9 @@ export default function AdminUserConversationsPage() {
           <Loader2 size={24} className="animate-spin text-[var(--color-primary)]" />
         </div>
       ) : error ? (
-        <p className="text-center py-8 text-sm text-red-500">{error}</p>
+        <p className="text-center py-8 text-sm text-[var(--color-danger)]">{error}</p>
       ) : (
-        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+        <div className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
