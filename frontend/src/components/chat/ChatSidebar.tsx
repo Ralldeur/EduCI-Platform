@@ -15,10 +15,10 @@ import {
   LogOut,
   Menu,
   X,
-  GraduationCap,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { signOut } from "next-auth/react";
+import EduCILogo from "@/components/icons/EduCILogo";
 import Button from "@/components/ui/Button";
 import { cn, getSubjectIcon } from "@/lib/utils";
 import type { ConversationSummary, ConversationMode } from "@/types";
@@ -89,7 +89,7 @@ export default function ChatSidebar({
         <div className="p-3 border-b border-[var(--color-border)]">
           <div className="flex items-center gap-2 mb-4 px-1">
             <div className="w-6 h-6 rounded-[var(--radius-sm)] bg-[var(--color-primary)] flex items-center justify-center flex-shrink-0">
-              <GraduationCap size={14} className="text-[var(--color-primary-foreground)]" />
+              <EduCILogo width={14} height={14} className="text-[var(--color-primary-foreground)]" />
             </div>
             <h1 className="font-semibold text-[15px] tracking-tight">EduCI</h1>
           </div>

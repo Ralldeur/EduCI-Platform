@@ -1,7 +1,7 @@
 "use client";
 
 import { signIn } from "next-auth/react";
-import { GraduationCap } from "lucide-react";
+import EduCILogo from "@/components/icons/EduCILogo";
 import Button from "@/components/ui/Button";
 
 // Authentification déléguée entièrement à Keycloak (realm "educi") — plus de
@@ -22,7 +22,7 @@ export default function LoginPage() {
       <div className="relative w-full max-w-[380px]">
         <div className="flex items-center justify-center gap-2 mb-8">
           <div className="w-8 h-8 rounded-[var(--radius-sm)] bg-[var(--color-primary)] flex items-center justify-center">
-            <GraduationCap size={18} className="text-[var(--color-primary-foreground)]" />
+            <EduCILogo width={18} height={18} className="text-[var(--color-primary-foreground)]" />
           </div>
           <span className="font-semibold text-[15px] tracking-tight">EduCI</span>
         </div>

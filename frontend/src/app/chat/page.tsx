@@ -1,13 +1,13 @@
 "use client";
 
 import {
-  GraduationCap,
   MessageSquare,
   ClipboardCheck,
   BookOpen,
   Brain,
   HelpCircle,
 } from "lucide-react";
+import EduCILogo from "@/components/icons/EduCILogo";
 
 export default function ChatHome() {
   return (
@@ -15,7 +15,7 @@ export default function ChatHome() {
       <div className="text-center max-w-md">
         <div className="flex justify-center mb-6">
           <div className="w-14 h-14 rounded-[var(--radius-lg)] bg-[var(--color-primary-subtle)] text-[var(--color-primary)] flex items-center justify-center">
-            <GraduationCap size={26} />
+            <EduCILogo width={26} height={26} />
           </div>
         </div>
         <h2 className="text-xl font-semibold tracking-tight mb-2">

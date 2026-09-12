@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, useCallback } from "react";
 import { usePathname } from "next/navigation";
 import ChatSidebar from "@/components/chat/ChatSidebar";
-import { GraduationCap } from "lucide-react";
+import EduCILogo from "@/components/icons/EduCILogo";
 import toast from "react-hot-toast";
 import { normalizeGradeLevel } from "@/lib/utils";
 import type { ConversationSummary, ConversationMode } from "@/types";
@@ -101,7 +101,7 @@ export default function ChatLayout({
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="animate-pulse">
-          <GraduationCap size={48} className="text-[var(--color-primary)]" />
+          <EduCILogo width={48} height={48} className="text-[var(--color-primary)]" />
         </div>
       </div>
     );

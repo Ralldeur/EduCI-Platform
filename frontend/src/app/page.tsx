@@ -4,13 +4,13 @@ import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 import {
-  GraduationCap,
   MessageSquare,
   ClipboardCheck,
   BookOpen,
   Brain,
   ArrowRight,
 } from "lucide-react";
+import EduCILogo from "@/components/icons/EduCILogo";
 import Button from "@/components/ui/Button";
 import Link from "next/link";
 
@@ -28,7 +28,7 @@ export default function HomePage() {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="animate-pulse">
-          <GraduationCap size={48} className="text-[var(--color-primary)]" />
+          <EduCILogo width={48} height={48} className="text-[var(--color-primary)]" />
         </div>
       </div>
     );
@@ -42,7 +42,7 @@ export default function HomePage() {
       <div className="max-w-6xl mx-auto px-4 pt-20 pb-16">
         <nav className="flex justify-between items-center mb-20">
           <div className="flex items-center gap-2">
-            <GraduationCap size={32} className="text-[var(--color-primary)]" />
+            <EduCILogo width={32} height={32} className="text-[var(--color-primary)]" />
             <span className="font-bold text-xl">EduCI</span>
           </div>
           <div className="flex gap-3">
@@ -151,7 +151,7 @@ export default function HomePage() {
       {/* Footer */}
       <footer className="border-t border-[var(--color-border)] py-8">
         <p className="text-center text-sm text-[var(--color-muted)]">
-          &copy; {new Date().getFullYear()} EduCI — EdTech africaine propulsée par l&apos;IA
+          &copy; {new Date().getFullYear()} EduCI by Zana Chris — l&apos;école ivoirienne, réinventée par l&apos;IA
         </p>
       </footer>
     </div>
