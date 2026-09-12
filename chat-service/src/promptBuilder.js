@@ -48,7 +48,17 @@ export function docTypeForMode(mode) {
   return ["EXERCISE", "CORRECTION"].includes(mode) ? "exercice" : "cours";
 }
 
-export function buildSystemPrompt({ gradeLevel, subject, mode = "CHAT", serie, ragResults = [] }) {
+export function buildSystemPrompt({ gradeLevel, subject, mode = "CHAT", serie, firstName, ragResults = [] }) {
+  // firstName vient du claim OIDC given_name (attribut Keycloak firstName),
+  // modifiable par l'élève depuis /settings — voir gateway/src/auth.js
+  // (header x-user-firstname) et identity() dans index.js. Absent pour un
+  // token pas encore rafraîchi après un changement récent, ou pour un
+  // compte sans prénom renseigné : on retombe sur une formulation neutre
+  // plutôt que de laisser un "undefined"/vide s'infiltrer dans le prompt.
+  const nameText = firstName
+    ? `L'élève s'appelle ${firstName} — adresse-toi à lui/elle par ce prénom de temps en temps (pas à chaque phrase), pour un ton chaleureux et personnalisé plutôt que robotique.`
+    : "";
+
   const levelText = gradeLevel
     ? `L'élève est en classe de ${gradeLevel}.`
     : "Le niveau scolaire n'est pas encore précisé.";
@@ -100,6 +110,7 @@ export function buildSystemPrompt({ gradeLevel, subject, mode = "CHAT", serie, r
 
 Tu es un assistant éducatif intelligent conçu spécialement pour les élèves ivoiriens, basé sur le programme officiel du Ministère de l'Éducation Nationale et de l'Alphabétisation de Côte d'Ivoire (MENA/DPFC).
 Tu dois toujours répondre en français, de manière claire et pédagogique.
+${nameText}
 ${levelText}
 ${subjectText}
 ${serie ? `Série BAC : ${serie}.` : ""}

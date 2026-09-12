@@ -15,6 +15,7 @@ import {
   LogOut,
   Menu,
   X,
+  Settings,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { signOut } from "next-auth/react";
@@ -183,6 +184,13 @@ export default function ChatSidebar({
 
         {/* Footer */}
         <div className="p-2 border-t border-[var(--color-border)] space-y-0.5">
+          <button
+            onClick={() => router.push("/settings")}
+            className="w-full flex items-center gap-2.5 px-3 py-2 rounded-[var(--radius-md)] hover:bg-[var(--color-surface-hover)] text-sm text-[var(--color-muted)] hover:text-[var(--color-foreground)] transition-colors cursor-pointer"
+          >
+            <Settings size={15} />
+            Paramètres
+          </button>
           <button
             onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
             className="w-full flex items-center gap-2.5 px-3 py-2 rounded-[var(--radius-md)] hover:bg-[var(--color-surface-hover)] text-sm text-[var(--color-muted)] hover:text-[var(--color-foreground)] transition-colors cursor-pointer"

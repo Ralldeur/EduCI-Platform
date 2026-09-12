@@ -10,6 +10,11 @@ declare module "next-auth" {
       roles: string[];
       gradeLevel: string | null;
       serie: string | null;
+      // Prénom affiché (claim OIDC given_name, attribut Keycloak firstName).
+      // Modifiable par l'élève lui-même depuis /settings — voir
+      // src/app/api/settings/route.ts et le callback jwt (trigger "update")
+      // dans src/lib/auth.ts.
+      firstName: string | null;
     };
     // Présent uniquement si le rafraîchissement du token Keycloak a échoué
     // (voir refreshAccessToken dans src/lib/auth.ts) — permet à un composant
@@ -24,6 +29,7 @@ declare module "next-auth/jwt" {
     roles: string[];
     gradeLevel: string | null;
     serie: string | null;
+    firstName: string | null;
     // access_token / id_token / refresh_token Keycloak, gardés côté serveur
     // uniquement (voir getAccessToken() dans src/lib/auth.ts) — jamais
     // exposés dans Session, qui elle est accessible côté client.

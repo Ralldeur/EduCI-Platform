@@ -18,8 +18,22 @@ app.get("/health", (_req, res) => {
 });
 
 // Le gateway a déjà validé le JWT et injecté ces headers (voir gateway/src/auth.js).
+// x-user-firstname est encodé en URI côté gateway (accents interdits dans un
+// header HTTP brut) — on le décode symétriquement ici ; absent/vide -> null,
+// laissant buildSystemPrompt (promptBuilder.js) retomber sur une formulation
+// générique plutôt que de s'adresser à l'élève par un prénom vide.
 function identity(req) {
-  return { userId: req.headers["x-user-id"] };
+  const rawFirstName = req.headers["x-user-firstname"];
+  let firstName = null;
+  if (rawFirstName) {
+    try {
+      const decoded = decodeURIComponent(rawFirstName);
+      firstName = decoded.trim() || null;
+    } catch {
+      firstName = null;
+    }
+  }
+  return { userId: req.headers["x-user-id"], firstName };
 }
 
 // Traduit un échec d'appel Groq en réponse HTTP adaptée. PROMPT_TOO_LARGE
@@ -216,7 +230,7 @@ app.delete("/conversations/:id", async (req, res) => {
 // --- Chat --------------------------------------------------------------
 
 app.post("/chat", async (req, res) => {
-  const { userId } = identity(req);
+  const { userId, firstName } = identity(req);
   if (!userId) return res.status(401).json({ error: "Non authentifié" });
 
   const { conversationId, message } = req.body || {};
@@ -265,6 +279,7 @@ app.post("/chat", async (req, res) => {
     subject: conversation.subject,
     mode: conversation.mode,
     serie: conversation.serie,
+    firstName,
     ragResults,
   });
 

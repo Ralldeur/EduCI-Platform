@@ -43,6 +43,10 @@ interface KeycloakProfile {
   realm_access?: { roles?: string[] };
   grade_level?: string | null;
   bac_series?: string | null;
+  // Claim standard du scope OIDC "profile" (déjà dans defaultClientScopes du
+  // client educi-frontend, voir realm-export.json) — pas de protocol mapper
+  // custom nécessaire, contrairement à grade_level/bac_series ci-dessus.
+  given_name?: string | null;
 }
 
 // Forme de la réponse de l'endpoint token de Keycloak (grant refresh_token).
@@ -129,7 +133,7 @@ export const authOptions: NextAuthOptions = {
     // roles, grade_level, bac_series...). On les recopie dans le JWT
     // NextAuth pour pouvoir les relire côté serveur, et on rafraîchit
     // automatiquement l'access_token à chaque appel une fois expiré.
-    async jwt({ token, account, profile }) {
+    async jwt({ token, account, profile, trigger, session }) {
       // Connexion initiale : `account` n'est présent qu'à ce moment-là.
       if (account && profile) {
         const p = profile as unknown as KeycloakProfile;
@@ -144,8 +148,25 @@ export const authOptions: NextAuthOptions = {
         token.roles = p.realm_access?.roles ?? [];
         token.gradeLevel = p.grade_level ?? null;
         token.serie = p.bac_series ?? null;
+        token.firstName = p.given_name ?? null;
 
         return token;
+      }
+
+      // Appelé côté client via useSession().update({ firstName }) juste
+      // après une sauvegarde réussie dans /settings (voir
+      // src/app/api/settings/route.ts, qui écrit dans Keycloak via l'API
+      // Account). On recopie la valeur tout de suite (affichage instantané,
+      // pas besoin d'attendre le prochain aller-retour Keycloak) ET on force
+      // un rafraîchissement de l'access_token : sans ça, le claim
+      // given_name qu'il transporte resterait celui d'AVANT la modification
+      // jusqu'à son expiration naturelle (accessTokenLifespan, 900s côté
+      // realm) — ce qui ferait parler l'IA (chat-service, via le header
+      // x-user-firstname injecté par gateway) avec l'ancien prénom pendant
+      // jusqu'à 15 minutes après le changement.
+      if (trigger === "update" && session?.firstName) {
+        token.firstName = session.firstName;
+        return refreshAccessToken(token);
       }
 
       // Appels suivants : si l'access_token est encore valide (avec 30s de
@@ -162,6 +183,7 @@ export const authOptions: NextAuthOptions = {
       session.user.roles = token.roles ?? [];
       session.user.gradeLevel = token.gradeLevel ?? null;
       session.user.serie = token.serie ?? null;
+      session.user.firstName = token.firstName ?? null;
 
       // Le access_token Keycloak est nécessaire côté serveur (routes API du
       // frontend) pour appeler le gateway en tant qu'utilisateur authentifié.
