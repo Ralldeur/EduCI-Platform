@@ -121,7 +121,7 @@
       "enabled": true,
       "serviceAccountClientId": "educi-admin-service",
       "clientRoles": {
-        "realm-management": ["manage-users"]
+        "realm-management": ["manage-users", "view-clients"]
       }
     },
     {
@@ -134,7 +134,7 @@
       "credentials": [
         { "type": "password", "value": "admin123", "temporary": false }
       ],
-      "realmRoles": ["ROLE_ADMIN"]
+      "realmRoles": ["ROLE_ADMIN", "default-roles-educi"]
     },
     {
       "username": "eleve.demo",
@@ -146,7 +146,7 @@
       "credentials": [
         { "type": "password", "value": "eleve123", "temporary": false }
       ],
-      "realmRoles": ["ROLE_STUDENT"],
+      "realmRoles": ["ROLE_STUDENT", "default-roles-educi"],
       "attributes": {
         "grade_level": ["Terminale D"],
         "bac_series": ["D"]

@@ -320,6 +320,27 @@ services:
     networks: [educi-net]
     restart: "no"
 
+  # Corrige les rôles CLIENT "account" (view-profile/manage-account)
+  # manquants sur les comptes importés en bloc via realm-export.json
+  # (eleve.demo/admin.demo, et tout futur import similaire) — requis par
+  # l'API Account de Keycloak utilisée par /settings. Voir le détail complet
+  # de l'investigation dans scripts/keycloak-fix-roles.sh et
+  # keycloak/README.md. Idempotent, sans effet sur les comptes déjà corrects
+  # (inscription normale) — exécuté à chaque démarrage, dev et prod.
+  keycloak-fix-roles:
+    image: alpine:3.20
+    container_name: educi-keycloak-fix-roles
+    environment:
+      KEYCLOAK_ADMIN_CLIENT_ID: educi-admin-service
+      KEYCLOAK_ADMIN_CLIENT_SECRET: ${KEYCLOAK_ADMIN_CLIENT_SECRET:-}
+    depends_on:
+      keycloak: { condition: service_started }
+    volumes:
+      - ./scripts/keycloak-fix-roles.sh:/keycloak-fix-roles.sh:ro
+    entrypoint: ["/bin/sh", "/keycloak-fix-roles.sh"]
+    networks: [educi-net]
+    restart: "no"
+
 ## ============================================================================
 ## KEYCLOAK — passage de "start-dev" à "start" (mode production)
 ## ============================================================================

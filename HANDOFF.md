@@ -208,6 +208,21 @@ toi seul connais avec certitude.
 
 ## 7. Points en suspens / connus
 
+- **Déploiement de la personnalisation par prénom (`/settings`)** : le rôle
+  manquant sur les comptes importés en bloc (`eleve.demo`/`admin.demo`) est
+  désormais corrigé automatiquement à chaque démarrage par le conteneur
+  one-shot `keycloak-fix-roles` (voir `docker-compose.yml` et
+  `keycloak/README.md`, section "Rôle `default-roles-educi` manquant sur les
+  comptes de démo") — plus d'étape manuelle à rejouer pour ce point précis.
+  **Une seule étape manuelle reste nécessaire au premier déploiement de ce
+  changement en prod** : accorder le rôle `realm-management:view-clients`
+  au compte de service `educi-admin-service` (commande dans
+  `keycloak/README.md`, sous-section "Permission `view-clients` requise"),
+  sans quoi `keycloak-fix-roles` échouera systématiquement à chaque
+  démarrage de la stack (visible dans `docker logs
+  educi-keycloak-fix-roles`), sans bloquer le reste des services (aucun
+  autre service n'en dépend). N'affecte pas les vrais comptes élèves inscrits
+  normalement, qui ont toujours eu ce qu'il faut par défaut.
 - **Domaine et HTTPS** : pas de nom de domaine acheté (contrainte de
   paiement temporaire, voir conversation du 2026-09-04/05). Le serveur
   tourne en HTTP simple sur l'IP brute (`167.86.116.14`), avec accès

@@ -61,6 +61,129 @@ les commentaires à cet endroit, même logique de "committé en clair, à
 changer avant prod, la variable seule ne suffit pas sur une instance déjà
 initialisée".
 
+## Rôle `default-roles-educi` manquant sur les comptes de démo (API Account)
+
+Découvert en implémentant `/settings` (prénom modifiable par l'élève,
+Keycloak Account REST API — `GET`/`POST /realms/educi/account` avec le
+propre access_token de l'utilisateur).
+
+**Symptôme** : cette API renvoyait `403 Forbidden` (`"unknown_error"`,
+peu parlant — la vraie raison n'apparaît que dans les logs Keycloak en
+`DEBUG`, voir `org.keycloak.services.error.KeycloakErrorHandler`) pour
+`eleve.demo` et `admin.demo`, alors qu'elle fonctionne pour un compte inscrit
+normalement via `/register` sans aucune configuration supplémentaire.
+
+**Cause** : l'API Account exige que le token porte les rôles client
+`view-profile`/`manage-account` du client interne `account`. Un utilisateur
+qui s'inscrit via le flux normal de Keycloak (`registrationAllowed: true`)
+reçoit automatiquement le rôle composite `default-roles-educi` (qui inclut
+ces deux rôles), assigné implicitement à la création du compte. Les comptes
+`eleve.demo`/`admin.demo`, eux, sont créés en bloc via la section `users` de
+`realm-export.json` — ce chemin d'import ne déclenche PAS cette assignation
+implicite. Sans `default-roles-educi`, le token de ces comptes n'a ni
+`resource_access.account`, ni même le claim `aud` correspondant (ajouté
+automatiquement par Keycloak dès que `resource_access` contient une entrée
+pour ce client) — aucun protocol mapper custom n'est nécessaire une fois le
+rôle correctement assigné, le mapper "client roles" du scope `roles` (déjà
+dans `defaultClientScopes` du client `educi-frontend`) s'en charge tout
+seul.
+
+**Corrigé pour les futurs imports** : `realmRoles` de ces deux utilisateurs
+dans `realm-export.json` inclut maintenant `default-roles-educi` en plus de
+leur rôle applicatif — utile seulement pour un volume Postgres/Keycloak
+vierge (même limite que partout ailleurs dans ce fichier : `--import-realm`
+ne ré-importe pas un realm déjà existant), donc insuffisant à lui seul pour
+une instance déjà en service.
+
+**Corrigé de façon automatique et permanente (2026-09-12)** : plutôt que de
+dépendre d'une étape manuelle à se souvenir de rejouer à chaque déploiement
+sur une instance déjà en service, un conteneur one-shot
+`keycloak-fix-roles` (voir `docker-compose.yml`, script
+`scripts/keycloak-fix-roles.sh`) tourne à **chaque démarrage** de la stack
+(dev et prod) et :
+
+1. s'authentifie avec le compte de service `educi-admin-service`
+   (`client_credentials`) ;
+2. vérifie, pour **tous** les comptes réels du realm (pas seulement
+   `eleve.demo`/`admin.demo` — coût négligeable au volume actuel, et ça
+   couvre aussi tout futur compte de démo/seed importé de la même façon),
+   s'ils portent bien les rôles CLIENT `account:view-profile` et
+   `account:manage-account` (directement, pas via le rôle composite — voir
+   le script pour le détail de ce choix, plus robuste face à un futur
+   renommage du realm) ;
+3. assigne directement les rôles manquants, sans toucher aux comptes déjà
+   corrects.
+
+Idempotent — sur une instance déjà correcte, il ne fait que vérifier et
+logger, aucun appel d'écriture. Voir ses logs avec :
+
+```bash
+docker logs educi-keycloak-fix-roles
+```
+
+Sortie attendue (`✅` = déjà bon, `🔧` = corrigé à l'instant) :
+
+```
+🔎 [keycloak-fix-roles] 4 compte(s) à vérifier.
+  ✅ admin.demo : déjà bon (view-profile + manage-account présents).
+  🔧 eleve.demo : corrigé (ajout de manage-account, view-profile).
+  ...
+🏁 [keycloak-fix-roles] terminé.
+```
+
+Un `❌` dans ces logs (échec d'authentification, rôle `view-profile`/
+`manage-account` introuvable sur le client `account`, échec HTTP à
+l'assignation) signale un problème réel à investiguer — voir la
+sous-section "Permission `view-clients` requise" ci-dessous pour la panne
+la plus probable.
+
+**Aucune étape manuelle plus nécessaire** au déploiement — ni pour la
+prod (voir HANDOFF.md, qui référence maintenant cette section) ni pour
+resynchroniser un dev local existant.
+
+### Permission `view-clients` requise sur `educi-admin-service`
+
+Point à corriger par rapport à ce qui avait été supposé au départ : le rôle
+`realm-management:manage-users` déjà présent sur le compte de service
+`educi-admin-service` (utilisé par l'API Admin Keycloak côté `/admin/users`
+du frontend) ne suffit PAS pour lister les clients du realm
+(`GET /admin/realms/educi/clients`), nécessaire au script pour résoudre
+l'id interne du client `account` et de ses rôles. Sans ce rôle
+supplémentaire, `keycloak-fix-roles` échoue avec un `403` dès l'appel à
+cet endpoint. `realmRoles`/`clientRoles` du compte de service inclut donc
+maintenant aussi `realm-management:view-clients` (lecture seule — liste et
+détail des clients, aucun droit de modification) dans
+`realm-export.json`, en plus de `manage-users`.
+
+Même limite que pour `default-roles-educi` ci-dessus : à appliquer une
+fois, manuellement, sur une instance déjà en service (dev local actuel,
+production au premier déploiement de ce changement) :
+
+```bash
+ADMIN_TOKEN=$(curl -s -X POST "$KEYCLOAK_URL/realms/master/protocol/openid-connect/token" \
+  -d client_id=admin-cli -d grant_type=password \
+  -d username=$KEYCLOAK_ADMIN -d password=$KEYCLOAK_ADMIN_PASSWORD \
+  | python3 -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
+
+SA_USER_ID=$(curl -s "$KEYCLOAK_URL/admin/realms/educi/users?username=service-account-educi-admin-service" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" | python3 -c "import sys,json;print(json.load(sys.stdin)[0]['id'])")
+RM_CLIENT_ID=$(curl -s "$KEYCLOAK_URL/admin/realms/educi/clients?clientId=realm-management" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" | python3 -c "import sys,json;print(json.load(sys.stdin)[0]['id'])")
+VIEW_CLIENTS_ROLE=$(curl -s "$KEYCLOAK_URL/admin/realms/educi/clients/$RM_CLIENT_ID/roles/view-clients" \
+  -H "Authorization: Bearer $ADMIN_TOKEN")
+
+curl -s -X POST "$KEYCLOAK_URL/admin/realms/educi/users/$SA_USER_ID/role-mappings/clients/$RM_CLIENT_ID" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+  -d "[$VIEW_CLIENTS_ROLE]"
+```
+
+Appliqué le 2026-09-12 sur l'instance de dev local (vérifié : le script
+`keycloak-fix-roles` échouait avec `403` sans cette étape, fonctionne
+après). **Pas encore appliqué en production** — à faire au déploiement de
+ce changement (voir HANDOFF.md), sans quoi le conteneur
+`keycloak-fix-roles` échouera systématiquement en prod (visible dans ses
+logs : `client 'account' introuvable dans le realm 'educi'`).
+
 ## Secret du client `educi-admin-service`
 
 Comme le mot de passe SMTP ci-dessous, ce secret est référencé dans
