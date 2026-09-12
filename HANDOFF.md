@@ -9,6 +9,22 @@ Dernière mise à jour : 2026-09-06.
 
 ---
 
+## 0. Emplacement du projet
+
+Le dépôt vit désormais à :
+
+```
+C:\Users\zanez\Projects\educi-platform
+```
+
+(déplacé le 2026-09-06 depuis `C:\Users\zanez\OneDrive\Documents\educi-platform`,
+qui posait des problèmes de synchronisation — voir le piège documenté en
+section 1). C'est ce chemin à utiliser pour rouvrir le projet dans VS Code,
+PyCharm, ou tout autre éditeur. Le dépôt Git est intact (même historique,
+mêmes remotes) — seul l'emplacement sur disque a changé.
+
+---
+
 ## 1. Lancer le projet en local
 
 Depuis la racine du dépôt (`docker compose` charge automatiquement le
@@ -49,11 +65,16 @@ Nécessite `frontend/.env` (distinct du `.env` racine — voir section 5) avec
 `docker compose up -d` (ou juste le conteneur frontend) après pour revenir
 en mode normal.
 
-**Piège connu** : ce dépôt vit dans un dossier synchronisé OneDrive. Il est
-arrivé qu'OneDrive déclenche une boucle de recompilation infinie du serveur
-dev Next.js (le watcher de fichiers réagit aux écritures de synchronisation
-OneDrive). Si `npm run dev` semble bloqué en compilation perpétuelle : tuer
-le process, supprimer `frontend/.next`, relancer.
+**Ancien piège (résolu le 2026-09-06)** : le dépôt vivait auparavant dans
+`C:\Users\zanez\OneDrive\Documents\educi-platform`, un dossier synchronisé
+OneDrive. OneDrive déclenchait par moments une boucle de recompilation
+infinie du serveur dev Next.js (le watcher de fichiers réagissait aux
+écritures de synchronisation OneDrive) et ralentissait nettement les builds
+Docker (retries répétés côté `npm run build`, 3-5 min au lieu de 30-90s). Le
+dépôt a été déplacé vers un chemin purement local (voir section 0 ci-dessous)
+pour éliminer ce problème. Si `npm run dev` semble malgré tout bloqué en
+compilation perpétuelle : tuer le process, supprimer `frontend/.next`,
+relancer.
 
 ---
 
