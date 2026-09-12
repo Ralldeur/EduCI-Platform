@@ -14,10 +14,12 @@ import Button from "@/components/ui/Button";
 import Select from "@/components/ui/Select";
 import { SUBJECTS, ALL_GRADE_LEVELS } from "@/lib/utils";
 import { LYCEE_SERIES } from "@/lib/curriculum";
-import { normalizeMathContent, useFitKatexDisplays } from "@/lib/markdown";
+import { mdSanitizeSchema, normalizeMathContent, useFitKatexDisplays } from "@/lib/markdown";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
+import rehypeRaw from "rehype-raw";
+import rehypeSanitize from "rehype-sanitize";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import toast from "react-hot-toast";
@@ -254,7 +256,7 @@ export default function ExercisesPage() {
             </div>
 
             <div className="prose-chat text-sm mb-4">
-              <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>
+              <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeRaw, [rehypeSanitize, mdSanitizeSchema], rehypeKatex]}>
                 {normalizeMathContent(exercise.question)}
               </ReactMarkdown>
             </div>
@@ -328,7 +330,7 @@ export default function ExercisesPage() {
                   Réponse :
                 </p>
                 <div className="prose-chat text-sm">
-                  <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>
+                  <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeRaw, [rehypeSanitize, mdSanitizeSchema], rehypeKatex]}>
                     {normalizeMathContent(exercise.answer)}
                   </ReactMarkdown>
                 </div>
@@ -338,7 +340,7 @@ export default function ExercisesPage() {
                       Explication :
                     </p>
                     <div className="prose-chat text-sm">
-                      <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>
+                      <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeRaw, [rehypeSanitize, mdSanitizeSchema], rehypeKatex]}>
                         {normalizeMathContent(exercise.explanation)}
                       </ReactMarkdown>
                     </div>

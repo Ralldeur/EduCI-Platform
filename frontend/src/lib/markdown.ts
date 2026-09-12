@@ -8,6 +8,42 @@
  */
 
 import { useEffect, type RefObject } from "react";
+import { defaultSchema } from "rehype-sanitize";
+import type { Schema } from "hast-util-sanitize";
+
+/**
+ * Le modèle génère spontanément (pas une instruction du prompt système) des
+ * blocs <details><summary>Voir la solution</summary>...</details> pour les
+ * corrigés repliables. react-markdown n'affiche jamais de HTML brut par
+ * défaut (rendu en texte échappé) — rehype-raw est nécessaire pour le
+ * parser en éléments réels, ce qui ouvre la porte à N'IMPORTE QUEL HTML/JS
+ * que le modèle produirait (halluciné ou par injection de contenu RAG) :
+ * rehype-sanitize doit donc TOUJOURS accompagner rehype-raw. Le schéma par
+ * défaut de rehype-sanitize (repris de celui de GitHub) autorise déjà
+ * "details"/"summary" tels quels ; on l'étend uniquement pour ajouter
+ * l'attribut standard "open" (replié/déplié par défaut), rien d'autre — pas
+ * question d'élargir au-delà de ce cas d'usage précis.
+ *
+ * Ordre des plugins rehype côté ChatMessage.tsx/exercises/page.tsx :
+ * [rehypeRaw, rehypeSanitize(mdSanitizeSchema), rehypeKatex] — rehypeRaw
+ * doit précéder rehypeSanitize (rien à nettoyer avant que le HTML brut soit
+ * parsé en éléments), et rehypeKatex doit venir APRÈS rehypeSanitize : le
+ * markup interne que KaTeX génère (classes "katex", "katex-mspace", spans
+ * aria-hidden...) ne fait pas partie du schéma de sanitisation et se ferait
+ * amputer si rehypeKatex tournait avant — les formules resteraient du texte
+ * brut non stylé.
+ */
+export const mdSanitizeSchema: Schema = {
+  ...defaultSchema,
+  // "details"/"summary" sont déjà dans le schéma par défaut (repris de
+  // GitHub) — Set() ci-dessous dédoublonne, listés explicitement quand même
+  // pour que cette autorisation reste visible ici plutôt qu'implicite.
+  tagNames: [...new Set([...(defaultSchema.tagNames ?? []), "details", "summary"])],
+  attributes: {
+    ...defaultSchema.attributes,
+    details: [...(defaultSchema.attributes?.details ?? []), "open"],
+  },
+};
 
 /**
  * Le modèle écrit souvent les formules bloc sur une seule ligne

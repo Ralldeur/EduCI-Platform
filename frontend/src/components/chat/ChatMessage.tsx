@@ -4,10 +4,12 @@ import { useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
+import rehypeRaw from "rehype-raw";
+import rehypeSanitize from "rehype-sanitize";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import { cn } from "@/lib/utils";
-import { normalizeMathContent, useFitKatexDisplays } from "@/lib/markdown";
+import { mdSanitizeSchema, normalizeMathContent, useFitKatexDisplays } from "@/lib/markdown";
 import { Sparkles } from "lucide-react";
 
 interface ChatMessageProps {
@@ -56,7 +58,10 @@ export default function ChatMessage({
             isStreaming && "typing-cursor"
           )}
         >
-          <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm, remarkMath]}
+            rehypePlugins={[rehypeRaw, [rehypeSanitize, mdSanitizeSchema], rehypeKatex]}
+          >
             {normalizeMathContent(content)}
           </ReactMarkdown>
         </div>
