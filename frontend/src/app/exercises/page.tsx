@@ -293,7 +293,7 @@ export default function ExercisesPage() {
               </ReactMarkdown>
             </div>
 
-            {exercise.options && (
+            {exercise.options && exercise.options.length > 0 && (
               <div className="space-y-2 mb-4">
                 {exercise.options.map((opt, j) => (
                   <label
@@ -317,7 +317,7 @@ export default function ExercisesPage() {
               </div>
             )}
 
-            {!exercise.options && (
+            {(!exercise.options || exercise.options.length === 0) && (
               <div className="mb-4">
                 <textarea
                   value={answers[i] ?? ""}
