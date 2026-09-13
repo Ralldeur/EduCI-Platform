@@ -443,7 +443,11 @@ export default function ExercisesPage() {
                     {corrections[i].score}/20
                   </span>
                 </div>
-                <p className="text-sm mb-2">{corrections[i].feedback}</p>
+                <div className="prose-chat text-sm mb-2">
+                  <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeRaw, [rehypeSanitize, mdSanitizeSchema], rehypeKatex]}>
+                    {normalizeMathContent(corrections[i].feedback)}
+                  </ReactMarkdown>
+                </div>
                 {corrections[i].positives?.length > 0 && (
                   <div className="mb-2">
                     <p className="text-xs font-medium text-[var(--color-success)] mb-1">
@@ -451,7 +455,14 @@ export default function ExercisesPage() {
                     </p>
                     <ul className="text-xs space-y-0.5">
                       {corrections[i].positives.map((p, j) => (
-                        <li key={j}>+ {p}</li>
+                        <li key={j} className="flex gap-1">
+                          <span>+</span>
+                          <span className="prose-chat">
+                            <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeRaw, [rehypeSanitize, mdSanitizeSchema], rehypeKatex]} components={{ p: "span" }}>
+                              {normalizeMathContent(p)}
+                            </ReactMarkdown>
+                          </span>
+                        </li>
                       ))}
                     </ul>
                   </div>
@@ -463,7 +474,14 @@ export default function ExercisesPage() {
                     </p>
                     <ul className="text-xs space-y-0.5">
                       {corrections[i].errors.map((e, j) => (
-                        <li key={j}>- {e}</li>
+                        <li key={j} className="flex gap-1">
+                          <span>-</span>
+                          <span className="prose-chat">
+                            <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeRaw, [rehypeSanitize, mdSanitizeSchema], rehypeKatex]} components={{ p: "span" }}>
+                              {normalizeMathContent(e)}
+                            </ReactMarkdown>
+                          </span>
+                        </li>
                       ))}
                     </ul>
                   </div>
@@ -475,7 +493,14 @@ export default function ExercisesPage() {
                     </p>
                     <ul className="text-xs space-y-0.5">
                       {corrections[i].tips.map((t, j) => (
-                        <li key={j}>💡 {t}</li>
+                        <li key={j} className="flex gap-1">
+                          <span>💡</span>
+                          <span className="prose-chat">
+                            <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeRaw, [rehypeSanitize, mdSanitizeSchema], rehypeKatex]} components={{ p: "span" }}>
+                              {normalizeMathContent(t)}
+                            </ReactMarkdown>
+                          </span>
+                        </li>
                       ))}
                     </ul>
                   </div>
