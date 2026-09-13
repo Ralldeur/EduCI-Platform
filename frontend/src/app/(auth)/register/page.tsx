@@ -1,30 +1,34 @@
-import Link from "next/link";
-import { GraduationCap } from "lucide-react";
+import { redirect } from "next/navigation";
 
-// Auto-inscription désactivée pour l'instant (voir décision du 23/08 — la
-// gestion des comptes passe par Keycloak, pas par un formulaire local). Les
-// comptes sont créés par l'établissement (import en masse via
-// frontend/scripts/migrate-users-to-keycloak.mjs, ou création manuelle dans
-// la console Keycloak). À remplacer plus tard par l'auto-inscription Keycloak
-// (KC_REGISTRATION_ALLOWED) ou un formulaire appelant l'API Admin Keycloak,
-// si le produit en a besoin.
+// Ancienne version (décision du 23/08) : auto-inscription désactivée, page
+// statique "contacte ton établissement" sans aucun formulaire — obsolète
+// depuis l'activation de l'auto-inscription côté Keycloak
+// (registrationAllowed: true, voir keycloak/realm-export.json), qui
+// fonctionne déjà (vérifié manuellement : formulaire d'inscription Keycloak
+// natif, e-mail de vérification Brevo). Cette page bloquait totalement
+// l'inscription pour quiconque l'atteignait (lien direct, favori, etc.),
+// sans jamais rediriger vers le flux Keycloak réel — bug trouvé le
+// 2026-09-14 via une vidéo d'un testeur externe.
+//
+// On redirige donc directement vers l'écran d'inscription natif de
+// Keycloak plutôt que de dupliquer un formulaire dans le frontend : mêmes
+// paramètres que l'URL d'autorisation construite par next-auth/providers/
+// keycloak (voir src/lib/auth.ts), mais sur l'endpoint `/registrations` au
+// lieu de `/auth` — c'est exactement le lien "Nouvel utilisateur ?
+// Enregistrement" affiché nativement par Keycloak sur /login. Après
+// inscription + vérification d'e-mail, Keycloak referme le flux OAuth vers
+// ce même redirect_uri, identique à une connexion normale.
 export default function RegisterPage() {
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-[var(--color-background)] px-4">
-      <div className="max-w-md w-full text-center space-y-6">
-        <GraduationCap size={48} className="mx-auto text-[var(--color-primary)]" />
-        <h1 className="text-2xl font-bold">Créer un compte</h1>
-        <p className="text-[var(--color-muted)]">
-          Les comptes élèves sont créés par ton établissement. Contacte ton
-          administration ou ton enseignant pour obtenir tes identifiants.
-        </p>
-        <Link
-          href="/login"
-          className="inline-block text-[var(--color-primary)] underline underline-offset-4"
-        >
-          J&apos;ai déjà un compte
-        </Link>
-      </div>
-    </div>
-  );
+  const issuer = process.env.KEYCLOAK_ISSUER!;
+  const clientId = process.env.KEYCLOAK_CLIENT_ID!;
+  const redirectUri = `${process.env.NEXTAUTH_URL}/api/auth/callback/keycloak`;
+
+  const registrationUrl =
+    `${issuer}/protocol/openid-connect/registrations` +
+    `?client_id=${encodeURIComponent(clientId)}` +
+    `&response_type=code` +
+    `&scope=openid` +
+    `&redirect_uri=${encodeURIComponent(redirectUri)}`;
+
+  redirect(registrationUrl);
 }

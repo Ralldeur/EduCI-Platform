@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { signIn } from "next-auth/react";
 import EduCILogo from "@/components/icons/EduCILogo";
 import Button from "@/components/ui/Button";
@@ -37,6 +38,15 @@ export default function LoginPage() {
           <Button onClick={() => signIn("keycloak", { callbackUrl: "/chat" })} className="w-full" size="lg">
             Se connecter
           </Button>
+          <p className="text-sm text-[var(--color-muted)] mt-4">
+            Pas encore de compte ?{" "}
+            <Link
+              href="/register"
+              className="text-[var(--color-primary)] underline underline-offset-4"
+            >
+              Créer un compte
+            </Link>
+          </p>
         </div>
 
         <p className="text-center text-xs text-[var(--color-muted-subtle)] mt-6">
