@@ -29,7 +29,8 @@ function getRealm(): string {
 }
 
 async function getServiceAccountToken(): Promise<string> {
-  const res = await fetch(`${process.env.KEYCLOAK_ISSUER!}/protocol/openid-connect/token`, {
+  const issuer = process.env.KEYCLOAK_INTERNAL_ISSUER || process.env.KEYCLOAK_ISSUER!;
+  const res = await fetch(`${issuer}/protocol/openid-connect/token`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
