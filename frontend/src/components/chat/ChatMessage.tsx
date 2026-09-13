@@ -16,12 +16,17 @@ interface ChatMessageProps {
   content: string;
   role: "user" | "assistant";
   isStreaming?: boolean;
+  /** Aperçu local de la photo jointe (voir ChatMessage dans types/index.ts)
+   * — n'existe que sur le message tout juste envoyé, jamais après un
+   * rechargement de la conversation. */
+  imageUrl?: string;
 }
 
 export default function ChatMessage({
   content,
   role,
   isStreaming,
+  imageUrl,
 }: ChatMessageProps) {
   const isUser = role === "user";
   const contentRef = useRef<HTMLDivElement>(null);
@@ -34,9 +39,19 @@ export default function ChatMessage({
     return (
       <div className="px-4 py-2.5 md:px-8 flex justify-end">
         <div className="max-w-[75%] rounded-[var(--radius-lg)] rounded-tr-[var(--radius-sm)] bg-[var(--color-chat-user)] border border-[var(--color-border)] px-4 py-2.5">
-          <p className="text-sm leading-relaxed whitespace-pre-wrap text-[var(--color-foreground)]">
-            {content}
-          </p>
+          {imageUrl && (
+            // eslint-disable-next-line @next/next/no-img-element -- data URL locale, pas un asset optimisable par next/image
+            <img
+              src={imageUrl}
+              alt="Photo envoyée par l'élève"
+              className="rounded-[var(--radius-md)] mb-2 max-h-64 w-auto max-w-full"
+            />
+          )}
+          {content && (
+            <p className="text-sm leading-relaxed whitespace-pre-wrap text-[var(--color-foreground)]">
+              {content}
+            </p>
+          )}
         </div>
       </div>
     );

@@ -43,8 +43,30 @@ const MODEL_MAX_OUTPUT_TOKENS = 16000;
 // dépasser TPM_LIMIT malgré computeMaxTokens(). ~3 caractères/token colle
 // beaucoup plus près du réel pour ce type de contenu (accents, vocabulaire
 // technique, contenu structuré).
-function estimateTokens(text) {
-  return Math.ceil((text ?? "").length / 3);
+//
+// Coût fixe par image côté Groq pour qwen/qwen3.6-27b, indépendant de sa
+// résolution (voir console.groq.com/docs/vision) — utilisé depuis l'ajout
+// de la fonctionnalité photo (élève qui photographie un exercice manuscrit,
+// voir /chat et /exercises/correct dans index.js). 2048 tokens représente
+// déjà ~25% du budget TPM_LIMIT actuel (8000) à lui seul : une requête avec
+// photo laisse donc mécaniquement moins de marge à computeMaxTokens() qu'une
+// requête texte équivalente — attendu, pas un bug, mais à garder en tête si
+// PROMPT_TOO_LARGE redevient fréquent une fois la fonctionnalité en usage.
+const IMAGE_TOKEN_COST = 2048;
+
+// `content` peut désormais être soit une chaîne (texte simple, cas
+// historique), soit un tableau de "parts" façon OpenAI/Groq multimodal
+// ([{type:"text",text:"..."}, {type:"image_url",image_url:{url:"..."}}])
+// quand un message inclut une photo — voir index.js. On distingue les deux
+// formes ici pour que l'estimation TPM reste correcte dans les deux cas.
+function estimateTokens(content) {
+  if (Array.isArray(content)) {
+    return content.reduce((total, part) => {
+      if (part?.type === "image_url") return total + IMAGE_TOKEN_COST;
+      return total + Math.ceil((part?.text ?? "").length / 3);
+    }, 0);
+  }
+  return Math.ceil((content ?? "").length / 3);
 }
 
 // Doit couvrir TOUT ce qui compte dans le prompt réellement envoyé à

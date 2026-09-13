@@ -15,6 +15,11 @@ export interface ChatMessage {
   content: string;
   role: MessageRole;
   createdAt: string;
+  /** Aperçu local (data URL) de la photo jointe par l'élève à ce message —
+   * jamais renvoyé par le serveur (l'image n'est pas persistée en base,
+   * voir chat-service/src/index.js) : présent uniquement sur le message
+   * fraîchement envoyé côté client, absent après rechargement. */
+  imageUrl?: string;
 }
 
 export interface Conversation {

@@ -144,12 +144,19 @@ export default function ConversationPage() {
     }).catch(() => {});
   };
 
-  const handleSend = async (message: string) => {
+  const handleSend = async (message: string, imageDataUrl?: string) => {
+    // Même repli texte que côté serveur (voir savedContent dans
+    // chat-service/src/index.js) : une photo sans légende tapée ne doit pas
+    // laisser une bulle de message vide, et ce texte doit matcher
+    // exactement ce qui sera persisté en base pour rester cohérent après un
+    // rechargement de la conversation (qui, lui, ne récupère jamais
+    // imageUrl — non persistée, voir types/index.ts).
     const userMessage: ChatMessageType = {
       id: `temp-${Date.now()}`,
-      content: message,
+      content: message || "📷 Photo envoyée pour analyse.",
       role: "user",
       createdAt: new Date().toISOString(),
+      imageUrl: imageDataUrl,
     };
 
     setMessages((prev) => [...prev, userMessage]);
@@ -160,7 +167,7 @@ export default function ConversationPage() {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ conversationId, message }),
+        body: JSON.stringify({ conversationId, message, image: imageDataUrl }),
       });
 
       if (!res.ok) {
@@ -295,6 +302,7 @@ export default function ConversationPage() {
                 key={msg.id}
                 content={msg.content}
                 role={msg.role as "user" | "assistant"}
+                imageUrl={msg.imageUrl}
               />
             ))}
             {streamingContent && (

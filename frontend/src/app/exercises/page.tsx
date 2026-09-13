@@ -9,11 +9,14 @@ import {
   CheckCircle,
   XCircle,
   ArrowLeft,
+  ImagePlus,
+  X,
 } from "lucide-react";
 import Button from "@/components/ui/Button";
 import Select from "@/components/ui/Select";
 import { SUBJECTS, ALL_GRADE_LEVELS } from "@/lib/utils";
 import { LYCEE_SERIES } from "@/lib/curriculum";
+import { compressImageFile } from "@/lib/imageCompress";
 import { mdSanitizeSchema, normalizeMathContent, useFitKatexDisplays } from "@/lib/markdown";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -53,6 +56,13 @@ export default function ExercisesPage() {
   const [exercises, setExercises] = useState<GeneratedExercise[]>([]);
   const [generating, setGenerating] = useState(false);
   const [answers, setAnswers] = useState<Record<number, string>>({});
+  // Alternative à la réponse tapée : une photo du travail manuscrit de
+  // l'élève (voir compressImageFile) — l'un ou l'autre suffit pour corriger,
+  // voir handleCorrect. Non exclusif : les deux peuvent coexister (ex. une
+  // légende tapée + une photo), le backend accepte les deux (voir
+  // studentAnswerImage, chat-service/src/index.js).
+  const [answerImages, setAnswerImages] = useState<Record<number, string>>({});
+  const [compressingIndex, setCompressingIndex] = useState<number | null>(null);
   const [corrections, setCorrections] = useState<
     Record<number, CorrectionResult>
   >({});
@@ -79,6 +89,7 @@ export default function ExercisesPage() {
     setGenerating(true);
     setExercises([]);
     setAnswers({});
+    setAnswerImages({});
     setCorrections({});
     setShowAnswers({});
 
@@ -113,8 +124,9 @@ export default function ExercisesPage() {
   const handleCorrect = async (index: number) => {
     const exercise = exercises[index];
     const answer = answers[index];
-    if (!answer?.trim()) {
-      toast.error("Écris ta réponse avant de corriger");
+    const answerImage = answerImages[index];
+    if (!answer?.trim() && !answerImage) {
+      toast.error("Écris ta réponse ou joins une photo avant de corriger");
       return;
     }
 
@@ -127,6 +139,7 @@ export default function ExercisesPage() {
         body: JSON.stringify({
           question: exercise.question,
           studentAnswer: answer,
+          studentAnswerImage: answerImage,
           correctAnswer: exercise.answer,
           subject,
           gradeLevel,
@@ -141,6 +154,25 @@ export default function ExercisesPage() {
       toast.error("Erreur de correction");
     } finally {
       setCorrecting(null);
+    }
+  };
+
+  const handleAnswerImageChange = async (
+    index: number,
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+
+    setCompressingIndex(index);
+    try {
+      const dataUrl = await compressImageFile(file);
+      setAnswerImages((prev) => ({ ...prev, [index]: dataUrl }));
+    } catch {
+      toast.error("Impossible de lire cette photo, réessaie");
+    } finally {
+      setCompressingIndex(null);
     }
   };
 
@@ -286,15 +318,62 @@ export default function ExercisesPage() {
             )}
 
             {!exercise.options && (
-              <textarea
-                value={answers[i] ?? ""}
-                onChange={(e) =>
-                  setAnswers((prev) => ({ ...prev, [i]: e.target.value }))
-                }
-                placeholder="Écris ta réponse ici..."
-                rows={3}
-                className="w-full px-3 py-2 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-foreground)] placeholder:text-[var(--color-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] text-sm resize-none mb-4"
-              />
+              <div className="mb-4">
+                <textarea
+                  value={answers[i] ?? ""}
+                  onChange={(e) =>
+                    setAnswers((prev) => ({ ...prev, [i]: e.target.value }))
+                  }
+                  placeholder="Écris ta réponse ici, ou joins une photo de ton travail manuscrit..."
+                  rows={3}
+                  className="w-full px-3 py-2 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-foreground)] placeholder:text-[var(--color-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] text-sm resize-none"
+                />
+                <div className="flex items-center gap-2 mt-2">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    className="hidden"
+                    id={`answer-photo-${i}`}
+                    onChange={(e) => handleAnswerImageChange(i, e)}
+                  />
+                  <label
+                    htmlFor={`answer-photo-${i}`}
+                    className="inline-flex items-center gap-1.5 text-xs font-medium text-[var(--color-muted)] hover:text-[var(--color-foreground)] cursor-pointer px-2 py-1.5 rounded-[var(--radius-md)] border border-[var(--color-border)] hover:bg-[var(--color-surface-hover)]"
+                  >
+                    {compressingIndex === i ? (
+                      <Loader2 size={14} className="animate-spin" />
+                    ) : (
+                      <ImagePlus size={14} />
+                    )}
+                    Joindre une photo
+                  </label>
+                  {answerImages[i] && (
+                    <div className="inline-flex items-center gap-1.5 p-1 pr-2 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)]">
+                      {/* eslint-disable-next-line @next/next/no-img-element -- aperçu local (data URL) */}
+                      <img
+                        src={answerImages[i]}
+                        alt="Photo de la réponse"
+                        className="h-8 w-8 object-cover rounded-[var(--radius-sm)]"
+                      />
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setAnswerImages((prev) => {
+                            const next = { ...prev };
+                            delete next[i];
+                            return next;
+                          })
+                        }
+                        className="text-[var(--color-muted)] hover:text-[var(--color-foreground)]"
+                        title="Retirer la photo"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
             )}
 
             <div className="flex gap-2">

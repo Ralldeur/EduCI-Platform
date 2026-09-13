@@ -48,7 +48,7 @@ export function docTypeForMode(mode) {
   return ["EXERCISE", "CORRECTION"].includes(mode) ? "exercice" : "cours";
 }
 
-export function buildSystemPrompt({ gradeLevel, subject, mode = "CHAT", serie, firstName, ragResults = [] }) {
+export function buildSystemPrompt({ gradeLevel, subject, mode = "CHAT", serie, firstName, ragResults = [], hasImage = false }) {
   // firstName vient du claim OIDC given_name (attribut Keycloak firstName),
   // modifiable par l'élève depuis /settings — voir gateway/src/auth.js
   // (header x-user-firstname) et identity() dans index.js. Absent pour un
@@ -106,6 +106,15 @@ export function buildSystemPrompt({ gradeLevel, subject, mode = "CHAT", serie, f
   // précise (voir curriculum.js).
   const curriculumBlock = buildCurriculumContext(gradeLevel, subject, serie);
 
+  // Fonctionnalité photo (élève qui joint une image de son travail
+  // manuscrit) — voir /chat et /exercises/correct dans index.js. S'applique
+  // à tous les modes : contrairement au garde-fou anti-fuite ci-dessus (qui
+  // dépend du contenu RAG), l'instruction de transcription est nécessaire
+  // dès qu'une image est présente, quel que soit le mode.
+  const imageInstructionBlock = hasImage
+    ? `\n\nUne photo a été jointe par l'élève (exercice et/ou réponse manuscrite). Commence TOUJOURS par transcrire fidèlement ce que tu lis sur l'image avant de répondre ou de corriger. Si un passage est illisible ou ambigu, dis-le honnêtement plutôt que de deviner ou d'inventer un contenu plausible.`
+    : "";
+
   return `${modeText}
 
 Tu es un assistant éducatif intelligent conçu spécialement pour les élèves ivoiriens, basé sur le programme officiel du Ministère de l'Éducation Nationale et de l'Alphabétisation de Côte d'Ivoire (MENA/DPFC).
@@ -125,5 +134,5 @@ Règles importantes :
 - Formules LaTeX : si tu annotes un terme avec \\underbrace ou \\overbrace (ex. "partie polynomiale", "reste"), place l'accolade autour du terme complet, jamais à l'intérieur du numérateur ou du dénominateur d'un \\frac — sinon l'étiquette se retrouve collée à la barre de fraction. Écris \\underbrace{\\frac{1}{x-2}}_{\\text{reste}}, jamais \\frac{\\underbrace{1}_{\\text{reste}}}{x-2}.
 - Délimiteurs LaTeX : entoure TOUJOURS une formule mathématique de $ (inline, ex. $x^2+1$) ou $$ (bloc, ex. $$\\frac{a}{b}$$) — jamais de parenthèses ou crochets seuls comme "( n \\in \\mathbb{N}^* )" ou "[ x = 2 ]". Le rendu (KaTeX côté élève) ne reconnaît que $ et $$ : toute formule écrite avec d'autres délimiteurs s'affiche en texte brut illisible au lieu d'un symbole mathématique.
 - Ne donne JAMAIS de réponses inappropriées ou hors du cadre éducatif.
-- RÈGLE DE COHÉRENCE NUMÉRIQUE : avant de finaliser ta réponse, si elle implique une équation, une racine, ou une propriété numérique à vérifier, assure-toi en interne (silencieusement) que les valeurs choisies donnent un résultat exact et simple (entier ou fraction simple), adapté au niveau de l'élève. Si un premier jeu de paramètres ne donne pas un résultat propre, choisis-en un autre et recommence — SANS JAMAIS montrer tes tentatives, hésitations, ou corrections à l'élève. La réponse finale doit se présenter comme si elle avait été correcte du premier coup : aucune trace visible de mots comme « attends », « réexaminons », « en fait », « pour simplifier », ou toute autre marque de raisonnement de repli.${contextBlock}${ragCorrectionGuard}`;
+- RÈGLE DE COHÉRENCE NUMÉRIQUE : avant de finaliser ta réponse, si elle implique une équation, une racine, ou une propriété numérique à vérifier, assure-toi en interne (silencieusement) que les valeurs choisies donnent un résultat exact et simple (entier ou fraction simple), adapté au niveau de l'élève. Si un premier jeu de paramètres ne donne pas un résultat propre, choisis-en un autre et recommence — SANS JAMAIS montrer tes tentatives, hésitations, ou corrections à l'élève. La réponse finale doit se présenter comme si elle avait été correcte du premier coup : aucune trace visible de mots comme « attends », « réexaminons », « en fait », « pour simplifier », ou toute autre marque de raisonnement de repli.${contextBlock}${ragCorrectionGuard}${imageInstructionBlock}`;
 }

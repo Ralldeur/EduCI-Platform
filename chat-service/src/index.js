@@ -11,7 +11,23 @@ import { verifyChecks } from "./mathCheck.js";
 const app = express();
 const PORT = process.env.PORT || 8082;
 
-app.use(express.json());
+// Limite par défaut d'Express (100kb) beaucoup trop basse depuis l'ajout de
+// la fonctionnalité photo (élève qui joint une image de son travail
+// manuscrit à /chat ou /exercises/correct, encodée en base64 dans le corps
+// JSON) — voir compressImageFile côté frontend, qui vise ~1-2 Mo par photo
+// après compression (le base64 gonfle ça d'environ 33%). 15mb laisse une
+// marge confortable au-dessus de ça tout en restant sous la limite Groq de
+// 20 Mo par image.
+app.use(express.json({ limit: "15mb" }));
+// Sans ce handler, un corps trop volumineux malgré tout (photo non
+// compressée, bug côté client) remonterait une erreur Express brute
+// (HTML/stack) au lieu d'un JSON exploitable par le frontend.
+app.use((err, _req, res, next) => {
+  if (err?.type === "entity.too.large") {
+    return res.status(413).json({ error: "Photo trop volumineuse — réessaie avec une photo plus légère." });
+  }
+  next(err);
+});
 
 app.get("/health", (_req, res) => {
   res.json({ status: "UP" });
@@ -233,10 +249,23 @@ app.post("/chat", async (req, res) => {
   const { userId, firstName } = identity(req);
   if (!userId) return res.status(401).json({ error: "Non authentifié" });
 
-  const { conversationId, message } = req.body || {};
-  if (!conversationId || !message) {
-    return res.status(400).json({ error: "conversationId et message sont requis" });
+  // `image` : data URL base64 (ex. "data:image/jpeg;base64,...") d'une photo
+  // jointe par l'élève (voir ChatInput.tsx côté frontend, compressée
+  // client-side avant envoi) — optionnelle, et peut accompagner ou remplacer
+  // `message` (photo seule, sans légende tapée).
+  const { conversationId, message, image } = req.body || {};
+  if (!conversationId || (!message && !image)) {
+    return res.status(400).json({ error: "conversationId et (message ou photo) sont requis" });
   }
+  // Contenu réellement persisté en base et utilisé pour le titre de la
+  // conversation — jamais vide même en mode "photo seule", et surtout : on
+  // ne stocke JAMAIS l'image elle-même en base (colonne `content` en TEXT,
+  // et on veut éviter de faire gonfler chat_messages avec du base64 — voir
+  // db.js). La photo ne sert qu'à cet unique appel Groq ; l'historique ne
+  // garde qu'une trace textuelle de son existence, la réponse de l'IA
+  // (qui commence par la transcrire, voir promptBuilder.js) faisant ensuite
+  // foi pour toute relecture ultérieure de la conversation.
+  const savedContent = message || "📷 Photo envoyée pour analyse.";
 
   // 1. Charger la conversation (et vérifier qu'elle appartient bien à l'utilisateur)
   const convResult = await pool.query(
@@ -259,18 +288,24 @@ app.post("/chat", async (req, res) => {
   const history = historyResult.rows;
 
   // 3. RAG : chercher du contexte pertinent, avec docType dérivé du mode
-  //    (voir promptBuilder.js — jamais de mélange cours/exercices).
-  const ragResults = await searchRag(message, {
-    subject: conversation.subject,
-    gradeLevel: conversation.grade_level,
-    docType: docTypeForMode(conversation.mode),
-    topK: 3,
-  });
+  //    (voir promptBuilder.js — jamais de mélange cours/exercices). Sans
+  //    texte (photo seule, pas de légende), il n'y a rien de pertinent à
+  //    interroger — chercher sur une chaîne vide renverrait un contexte
+  //    non pertinent au hasard plutôt qu'utile.
+  const ragResults = message
+    ? await searchRag(message, {
+        subject: conversation.subject,
+        gradeLevel: conversation.grade_level,
+        docType: docTypeForMode(conversation.mode),
+        topK: 3,
+      })
+    : [];
 
-  // 4. Sauvegarder le message de l'élève
+  // 4. Sauvegarder le message de l'élève (jamais l'image elle-même, voir
+  //    savedContent plus haut)
   await pool.query(
     "INSERT INTO chat_messages (id, conversation_id, role, content) VALUES ($1, $2, 'user', $3)",
-    [crypto.randomUUID(), conversationId, message]
+    [crypto.randomUUID(), conversationId, savedContent]
   );
 
   // 5. Construire le prompt et streamer la réponse
@@ -281,12 +316,24 @@ app.post("/chat", async (req, res) => {
     serie: conversation.serie,
     firstName,
     ragResults,
+    hasImage: Boolean(image),
   });
+
+  // Contenu du tour utilisateur envoyé à Groq : un tableau multimodal
+  // (texte + image) façon OpenAI/Groq si une photo est jointe, sinon le
+  // texte brut comme avant — voir estimateTokens (groqClient.js), qui gère
+  // les deux formes pour le calcul du budget TPM.
+  const userContent = image
+    ? [
+        { type: "text", text: message || "Voici une photo de mon exercice, peux-tu m'aider ?" },
+        { type: "image_url", image_url: { url: image } },
+      ]
+    : message;
 
   const chatMessages = [
     { role: "system", content: systemPrompt },
     ...history.map((m) => ({ role: m.role, content: m.content })),
-    { role: "user", content: message },
+    { role: "user", content: userContent },
   ];
 
   // Mode QUIZ : depuis que docTypeForMode interroge "cours" (voir
@@ -343,7 +390,7 @@ app.post("/chat", async (req, res) => {
     if (history.length === 0) {
       await pool.query(
         "UPDATE chat_conversations SET title = $1, updated_at = now() WHERE id = $2",
-        [message.substring(0, 50), conversationId]
+        [savedContent.substring(0, 50), conversationId]
       );
     }
 
@@ -623,9 +670,12 @@ app.post("/exercises/correct", async (req, res) => {
   const { userId } = identity(req);
   if (!userId) return res.status(401).json({ error: "Non authentifié" });
 
-  const { question, studentAnswer, correctAnswer, subject, gradeLevel } = req.body || {};
-  if (!question || !studentAnswer) {
-    return res.status(400).json({ error: "Question et réponse de l'élève requises" });
+  // `studentAnswerImage` : data URL base64 d'une photo de la réponse
+  // manuscrite de l'élève (voir page.tsx /exercises côté frontend),
+  // alternative à `studentAnswer` tapé au clavier — l'un des deux suffit.
+  const { question, studentAnswer, studentAnswerImage, correctAnswer, subject, gradeLevel } = req.body || {};
+  if (!question || (!studentAnswer && !studentAnswerImage)) {
+    return res.status(400).json({ error: "Question et réponse de l'élève (texte ou photo) requises" });
   }
 
   const sharedContext = `Niveau : ${gradeLevel ?? "niveau non précisé"}
@@ -633,7 +683,11 @@ Matière : ${subject ?? "matière non précisée"}
 
 Question : ${question}
 ${correctAnswer ? `Réponse attendue : ${correctAnswer}` : ""}
-Réponse de l'élève : ${studentAnswer}`;
+${
+  studentAnswerImage
+    ? "Réponse de l'élève : voir la photo jointe (travail manuscrit) — transcris-la fidèlement avant d'évaluer."
+    : `Réponse de l'élève : ${studentAnswer}`
+}`;
 
   // --- Étape 1/2 : vérification silencieuse de la note et du calcul ---
   // Même logique que pour /exercises/generate (voir plus haut) : sortie
@@ -642,13 +696,29 @@ Réponse de l'élève : ${studentAnswer}`;
   // vérifier/recalculer la méthode correcte avant de trancher la note.
   const verifyPrompt = `${sharedContext}
 
-Tâche : NE RÉDIGE PAS le feedback complet. Détermine et VÉRIFIE en interne la note exacte sur 20 selon le barème ivoirien (APC), ainsi que le résultat/la méthode corrects étape par étape si un calcul ou une résolution est en jeu. Si un premier calcul te semble incohérent, recorrige-le en interne avant de répondre — sans que cette étape n'apparaisse nulle part.
+Tâche : NE RÉDIGE PAS le feedback complet. ${
+    studentAnswerImage
+      ? "Transcris d'abord fidèlement la réponse manuscrite visible sur la photo jointe (si un passage est illisible, dis-le plutôt que de deviner). Puis "
+      : ""
+  }détermine et VÉRIFIE en interne la note exacte sur 20 selon le barème ivoirien (APC), ainsi que le résultat/la méthode corrects étape par étape si un calcul ou une résolution est en jeu. Si un premier calcul te semble incohérent, recorrige-le en interne avant de répondre — sans que cette étape n'apparaisse nulle part.
 
 Réponds UNIQUEMENT avec ce JSON compact (pas de rédaction complète) :
 {
+  "transcription": "transcription fidèle de la réponse manuscrite (uniquement si une photo a été fournie, sinon chaîne vide)",
   "score": 15,
   "keyFacts": "résultat/méthode corrects validés, et liste brève des erreurs précises de l'élève à mentionner"
 }`;
+
+  // Image envoyée UNE SEULE FOIS, à cette étape de vérification — l'étape 2
+  // (rédaction) réutilise la transcription déjà extraite ici plutôt que de
+  // rejoindre l'image une deuxième fois, pour ne pas payer deux fois son
+  // coût fixe en tokens (voir IMAGE_TOKEN_COST, groqClient.js).
+  const verifyUserContent = studentAnswerImage
+    ? [
+        { type: "text", text: verifyPrompt },
+        { type: "image_url", image_url: { url: studentAnswerImage } },
+      ]
+    : verifyPrompt;
 
   let rawVerification;
   try {
@@ -659,7 +729,7 @@ Réponds UNIQUEMENT avec ce JSON compact (pas de rédaction complète) :
           content:
             "Tu prépares en silence l'évaluation d'une copie d'élève ivoirien (programme MENA/DPFC, APC). Réponds uniquement en JSON compact, sans rédaction complète.",
         },
-        { role: "user", content: verifyPrompt },
+        { role: "user", content: verifyUserContent },
       ],
       { maxTokens: 100000, reasoningEffort: "default" }
     );
@@ -682,7 +752,11 @@ Réponds UNIQUEMENT avec ce JSON compact (pas de rédaction complète) :
   // l'étape 1, il ne reste qu'à rédiger proprement.
   const verificationBlock =
     verification.score != null || verification.keyFacts
-      ? `\n\nÉvaluation déjà vérifiée à utiliser telle quelle (ne la recalcule pas) :\n- Note validée : ${verification.score ?? "?"}/20\n- Éléments validés : ${verification.keyFacts ?? "aucun"}`
+      ? `\n\nÉvaluation déjà vérifiée à utiliser telle quelle (ne la recalcule pas) :\n${
+          verification.transcription
+            ? `- Transcription de la réponse manuscrite (photo) : ${verification.transcription}\n`
+            : ""
+        }- Note validée : ${verification.score ?? "?"}/20\n- Éléments validés : ${verification.keyFacts ?? "aucun"}`
       : "";
 
   const draftPrompt = `${sharedContext}${verificationBlock}
