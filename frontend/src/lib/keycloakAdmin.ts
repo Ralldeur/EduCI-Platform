@@ -19,12 +19,13 @@
 // au runtime (docker-compose.yml). Ce module n'est de toute façon appelé que
 // côté serveur, jamais au moment du build.
 function getKeycloakBaseUrl(): string {
-  const issuer = process.env.KEYCLOAK_ISSUER!;
+  const issuer = process.env.KEYCLOAK_INTERNAL_ISSUER || process.env.KEYCLOAK_ISSUER!;
   return issuer.replace(/\/realms\/[^/]+$/, "");
 }
 
 function getRealm(): string {
-  return process.env.KEYCLOAK_ISSUER!.split("/realms/")[1];
+  const issuer = process.env.KEYCLOAK_INTERNAL_ISSUER || process.env.KEYCLOAK_ISSUER!;
+  return issuer.split("/realms/")[1];
 }
 
 async function getServiceAccountToken(): Promise<string> {
