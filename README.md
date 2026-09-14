@@ -122,6 +122,12 @@ la procedure de neutralisation/suppression avant toute mise en production —
 ne pas y toucher sur l'environnement de dev actif tant qu'ils servent aux
 tests en cours.
 
+Les eleves peuvent aussi creer leur propre compte via `/register`, qui
+redirige vers le formulaire d'inscription natif de Keycloak
+(auto-inscription activee, `registrationAllowed: true` dans
+`keycloak/realm-export.json`). Un e-mail de verification est envoye via
+Brevo avant l'activation du compte.
+
 ## Contenu pedagogique et RAG
 
 Les documents sont classes par matiere et par type :
@@ -225,11 +231,15 @@ Le panel s'appuie sur l'API Admin Keycloak et les routes d'administration des mi
 
 ## Etat du projet
 
-Les fondations microservices, l'authentification Keycloak, le gateway, le
-frontend, le chat et le pipeline RAG sont en place. Le panel administrateur permet la gestion
-des utilisateurs et du contenu pedagogique. Les evolutions restantes
-incluent notamment l'enrichissement des parcours pedagogiques, les paiements,
-les statistiques d'apprentissage et une future application mobile.
+Les fondations microservices, l'authentification Keycloak (avec
+auto-inscription des eleves), le gateway, le frontend, le chat et le
+pipeline RAG sont en place. Le chat et la correction d'exercices
+acceptent egalement l'envoi de photos (devoirs manuscrits, exercices
+scannes), avec rendu des formules mathematiques (KaTeX) dans les
+reponses. Le panel administrateur permet la gestion des utilisateurs et
+du contenu pedagogique. Les evolutions restantes incluent notamment
+l'enrichissement des parcours pedagogiques, les paiements, les
+statistiques d'apprentissage et une future application mobile.
 
 ## Securite
 

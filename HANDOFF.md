@@ -5,7 +5,7 @@ secrète dans ce fichier (il est suivi par git) — voir `SECRETS-TEMPORAIRE.md`
 (hors dépôt, sur le Bureau) pour les vraies valeurs actuelles, à transférer
 dans un gestionnaire de mots de passe puis à supprimer.
 
-Dernière mise à jour : 2026-09-06.
+Dernière mise à jour : 2026-09-14.
 
 ---
 
@@ -235,10 +235,18 @@ toi seul connais avec certitude.
   (Caddy recommandé, gère Let's Encrypt automatiquement) — voir les
   commentaires `IP_TEMPORAIRE` dans ce fichier, qui listent précisément ce
   qui doit changer.
-- **IP supplémentaires à autoriser** : le pare-feu ne laisse passer qu'une
-  seule IP pour l'instant. Si d'autres personnes de confiance doivent
-  tester la plateforme, ajouter leur IP avec la commande ci-dessus (une
-  ligne par IP, sur le serveur).
+- **IP supplémentaires à autoriser** : deux IP sont désormais autorisées
+  (`102.67.250.25` et `102.209.219.16`, ajoutée le 2026-09-14 pour un
+  second testeur de confiance). Si d'autres personnes doivent tester la
+  plateforme, même procédure : `ufw allow from <IP> to any port
+  3000,8080 proto tcp` sur le serveur.
+- **Incohérence `KEYCLOAK_ADMIN_CLIENT_SECRET` détectée le 2026-09-14** :
+  la valeur dans `.env`/`frontend/.env` (dev local) ne correspond pas à
+  celle du vault `keycloak/vault/educi_adminclientsecret`. La section 5
+  dit qu'elles doivent être identiques — à vérifier laquelle est
+  réellement utilisée par Keycloak et à resynchroniser si besoin (sinon
+  risque d'échec d'authentification du service `educi-admin-service`,
+  notamment pour `keycloak-fix-roles`, voir point ci-dessus).
 - **Mot de passe root SSH** : toujours actif en plus de la clé. À changer
   ou désactiver (authentification par clé uniquement) une fois à l'aise
   avec l'accès par clé — voir SECRETS-TEMPORAIRE.md pour le mot de passe
@@ -282,3 +290,63 @@ toi seul connais avec certitude.
   nouvelle page/composant doit réutiliser ces tokens.
 - `.env.example` — modèle commenté du `.env` racine (sans valeurs réelles).
 - `cahier-des-charges-admin.md` — spécification du panel `/admin`.
+
+---
+
+## 9. Journal de session — 2026-09-14
+
+Session consacrée au test en conditions réelles de la fonctionnalité
+photo/vision (chat + correction d'exercices), à l'ouverture de la
+plateforme à des testeurs de confiance, et à un premier recensement des
+secrets. Trois bugs bloquants trouvés et corrigés en production :
+
+- **`/exercises` — champ de réponse manquant pour les exercices non-QCM** :
+  le backend renvoie `"options": []` au lieu d'omettre le champ pour les
+  types autres que QCM (contrairement à sa propre consigne de prompt) ;
+  le frontend traitait `[]` comme "vrai" et n'affichait donc ni le champ
+  de réponse libre ni les options. Corrigé côté frontend avec des
+  vérifications explicites `.length > 0` / `.length === 0`
+  (`frontend/src/app/exercises/page.tsx`). Le backend n'a pas été touché
+  (fix frontend suffisant et plus sûr).
+- **Feedback de correction affichant du LaTeX/Markdown brut** (`$x$`,
+  `\times`, etc. non rendus) : le texte de correction (feedback, points
+  positifs, erreurs, conseils) n'utilisait pas le même pipeline de rendu
+  que les questions/réponses. Corrigé en appliquant `ReactMarkdown` +
+  KaTeX (mêmes plugins : `remarkGfm`, `remarkMath`, `rehypeRaw`,
+  `rehypeSanitize`, `rehypeKatex`) à ces champs, dans
+  `frontend/src/app/exercises/page.tsx`. Vérifié visuellement en prod
+  après redéploiement.
+- **Inscription totalement cassée** : `/register` était une ancienne page
+  statique "contacte ton établissement" (décision du 23/08, obsolète
+  depuis que l'auto-inscription Keycloak a été activée) qui ne
+  redirigeait jamais vers le vrai formulaire. Bug repéré via une vidéo
+  WhatsApp d'un testeur externe. Corrigé en deux temps :
+  1. Réécriture de `frontend/src/app/(auth)/register/page.tsx` pour
+     rediriger vers l'écran d'inscription natif de Keycloak
+     (`/protocol/openid-connect/registrations`, mêmes paramètres que le
+     login OAuth).
+  2. Ajout de `export const dynamic = "force-dynamic"` sur cette page :
+     sans ça, Next.js la pré-rendait en statique au `build` Docker, où
+     les variables d'environnement (injectées seulement au runtime par
+     docker-compose) valaient `undefined`, cassant l'URL de redirection.
+  Flux complet vérifié en prod : inscription → e-mail de vérification
+  Brevo → retour sur l'app. Un lien "Créer un compte" a aussi été ajouté
+  sur `/login` (`frontend/src/app/(auth)/login/page.tsx`).
+  **Non vérifié à 100%** : la réception réelle de l'e-mail de
+  vérification côté boîte mail du testeur (seul maillon non confirmé en
+  conditions réelles à ce jour).
+
+Autres actions :
+- IP d'un second testeur de confiance autorisée sur le pare-feu
+  (`102.209.219.16`, voir section 7).
+- Premier inventaire des secrets connus (dev local) rassemblé dans
+  `Desktop\EduCI-Handoff\EduCI-secrets.csv`, prêt à importer dans un
+  gestionnaire de mots de passe. Incohérence trouvée entre le
+  `KEYCLOAK_ADMIN_CLIENT_SECRET` du `.env` et celui du vault (voir
+  section 7) — à résoudre.
+- **Reste à faire** : `SECRETS-TEMPORAIRE.md` introuvable (dossier
+  `Desktop\EduCI-Handoff` vide à part le CSV ci-dessus — statut à
+  clarifier : transféré puis supprimé comme prévu, ou perdu ?) ;
+  contenu réel de `/opt/educi/.env` en production pas encore recensé
+  (`cat /opt/educi/.env` sur le serveur) ; mots de passe des comptes
+  tiers (GitHub, Groq, Brevo, Contabo, registrar) pas encore recensés.
