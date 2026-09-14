@@ -235,11 +235,11 @@ toi seul connais avec certitude.
   (Caddy recommandé, gère Let's Encrypt automatiquement) — voir les
   commentaires `IP_TEMPORAIRE` dans ce fichier, qui listent précisément ce
   qui doit changer.
-- **IP supplémentaires à autoriser** : deux IP sont désormais autorisées
-  (`102.67.250.25` et `102.209.219.16`, ajoutée le 2026-09-14 pour un
-  second testeur de confiance). Si d'autres personnes doivent tester la
-  plateforme, même procédure : `ufw allow from <IP> to any port
-  3000,8080 proto tcp` sur le serveur.
+- **IP supplémentaires à autoriser** : trois IP sont désormais autorisées
+  (`102.67.250.25`, `102.209.219.16` et `102.207.1.106`, ces deux
+  dernières ajoutées le 2026-09-14 pour des testeurs de confiance). Si
+  d'autres personnes doivent tester la plateforme, même procédure :
+  `ufw allow from <IP> to any port 3000,8080 proto tcp` sur le serveur.
 - **Incohérence `KEYCLOAK_ADMIN_CLIENT_SECRET` détectée le 2026-09-14** :
   la valeur dans `.env`/`frontend/.env` (dev local) ne correspond pas à
   celle du vault `keycloak/vault/educi_adminclientsecret`. La section 5
