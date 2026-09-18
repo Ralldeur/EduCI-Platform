@@ -5,7 +5,7 @@ secrète dans ce fichier (il est suivi par git) — voir `SECRETS-TEMPORAIRE.md`
 (hors dépôt, sur le Bureau) pour les vraies valeurs actuelles, à transférer
 dans un gestionnaire de mots de passe puis à supprimer.
 
-Dernière mise à jour : 2026-09-14.
+Dernière mise à jour : 2026-09-18.
 
 ---
 
@@ -240,13 +240,16 @@ toi seul connais avec certitude.
   dernières ajoutées le 2026-09-14 pour des testeurs de confiance). Si
   d'autres personnes doivent tester la plateforme, même procédure :
   `ufw allow from <IP> to any port 3000,8080 proto tcp` sur le serveur.
-- **Incohérence `KEYCLOAK_ADMIN_CLIENT_SECRET` détectée le 2026-09-14** :
-  la valeur dans `.env`/`frontend/.env` (dev local) ne correspond pas à
-  celle du vault `keycloak/vault/educi_adminclientsecret`. La section 5
-  dit qu'elles doivent être identiques — à vérifier laquelle est
-  réellement utilisée par Keycloak et à resynchroniser si besoin (sinon
-  risque d'échec d'authentification du service `educi-admin-service`,
-  notamment pour `keycloak-fix-roles`, voir point ci-dessus).
+- ~~Incohérence `KEYCLOAK_ADMIN_CLIENT_SECRET` détectée le 2026-09-14~~ —
+  **résolue le 2026-09-18** : la valeur des `.env` était celle réellement
+  active côté Keycloak (confirmé via `keycloak-fix-roles`, qui s'authentifie
+  avec succès avec cette valeur). Le fichier vault avait été régénéré après
+  coup (rotation) sans être réappliqué sur le client déjà existant — logique,
+  puisque ce secret n'est repris par Keycloak qu'à l'import initial du realm,
+  pas à chaque redémarrage. Vault resynchronisé sur la valeur active en
+  local. Vérifié en prod : `.env` et vault y étaient déjà cohérents, rien à
+  changer côté serveur. Détail dans le journal de session ci-dessous
+  (section 10).
 - **Mot de passe root SSH** : toujours actif en plus de la clé. À changer
   ou désactiver (authentification par clé uniquement) une fois à l'aise
   avec l'accès par clé — voir SECRETS-TEMPORAIRE.md pour le mot de passe
@@ -350,3 +353,49 @@ Autres actions :
   contenu réel de `/opt/educi/.env` en production pas encore recensé
   (`cat /opt/educi/.env` sur le serveur) ; mots de passe des comptes
   tiers (GitHub, Groq, Brevo, Contabo, registrar) pas encore recensés.
+---
+
+## 10. Journal de session — 2026-09-17/18
+
+Session partie d'un signalement « plus personne ne reçoit l'e-mail de
+vérification » (Brevo suspecté), qui a fini par révéler un problème
+d'infrastructure plus large que Brevo lui-même.
+
+- **Cause réelle des e-mails manquants** : Keycloak (et Postgres, Qdrant)
+  étaient simplement arrêtés — pas un souci Brevo. Les identifiants SMTP
+  ont été testés indépendamment de Keycloak (connexion directe à
+  `smtp-relay.brevo.com:587` avec le mot de passe du vault) et fonctionnent
+  parfaitement.
+- **Pourquoi ces trois-là restaient éteints** : `postgres`, `keycloak` et
+  `qdrant` étaient les seuls services du `docker-compose.yml` sans
+  `restart: unless-stopped` (tous les autres l'ont). Un incident côté
+  machine (mise en veille, redémarrage de Docker Desktop/WSL2 — les logs
+  Postgres s'arrêtent net sans message de fermeture propre, signe d'une
+  coupure externe plutôt que d'un crash applicatif) les laissait donc down
+  indéfiniment, sans se relever seuls, contrairement aux autres services.
+  **Corrigé** : `restart: unless-stopped` ajouté aux trois, déployé en local
+  et en prod (commit `fix(infra): ajoute restart unless-stopped a
+  postgres/keycloak/qdrant`).
+- **Incohérence `KEYCLOAK_ADMIN_CLIENT_SECRET`** résolue au passage — voir
+  section 7 mise à jour.
+- **Piège découvert en testant l'inscription** : `/register` servait encore
+  l'ancienne page statique « contacte ton établissement », alors que le
+  correctif du 2026-09-14 (redirection vers l'inscription Keycloak native)
+  était bien présent dans le code (confirmé via `git log`). Cause : l'image
+  Docker du frontend n'avait jamais été reconstruite depuis ce correctif —
+  Next.js fige les routes statiques au `build`, donc un `docker compose up
+  -d` sans `--build` continue de servir l'ancien comportement même si le
+  code source a changé. Résolu par `docker compose up -d --build frontend`.
+  **À retenir** : un correctif committé ne sert à rien tant que l'image
+  n'est pas reconstruite — vérifier après tout changement de code frontend
+  qu'un rebuild a bien eu lieu, en local comme en prod.
+- **Flux d'inscription + vérification e-mail revérifié de bout en bout**
+  après ces correctifs : inscription → écran Keycloak natif → e-mail Brevo
+  reçu. Fonctionnel.
+- **Note méthodologique** : une tentative de simuler un crash artificiel
+  (`docker kill`, puis `kill -9 1` depuis l'intérieur du conteneur Keycloak)
+  n'a pas permis de déclencher de redémarrage automatique — un arrêt
+  provoqué explicitement via la CLI Docker (`docker kill`/`docker stop`)
+  n'active pas la politique `unless-stopped`, contrairement à un vrai
+  crash/OOM/coupure. Échec de test attendu, pas inquiétant — le vrai test
+  sera le prochain incident réel.
