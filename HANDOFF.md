@@ -452,3 +452,62 @@ sans lien avec les incidents infra des sessions précédentes :
   leçons RAG) : tout fonctionne, rien d'autre à signaler. Un seul 502
   isolé sur `/api/exercises/generate`, non reproduit au réessai immédiat
   avec les mêmes paramètres (aléa ponctuel côté Groq, pas un bug).
+
+---
+
+## 12. Journal de session — 2026-09-20 (suite)
+
+Deux sujets traités à la suite de la passe de tests du point 11 :
+
+- **Bug prod : aucun email de vérification à l'inscription**. Signalé
+  par l'utilisateur ("l'inscription ne fonctionne pas, il n'envoie pas
+  d'email de confirmation") uniquement en prod (jamais reproduit en
+  local). Diagnostic par élimination : le port SMTP sortant a été testé
+  directement (`timeout 5 bash -c "echo > /dev/tcp/smtp-relay.brevo.com/
+  587"` → OK) pour écarter un blocage réseau du VPS avant de creuser plus
+  loin. Cause réelle trouvée dans les logs du conteneur Keycloak :
+  `AccessDeniedException` sur `/opt/keycloak/vault/educi_smtppassword`.
+  Les fichiers vault (`keycloak/vault/educi_smtppassword` et
+  `educi_adminclientsecret`, tous deux gitignorés, présents uniquement
+  sur le serveur) étaient en `600 root:root`, illisibles par le
+  processus Keycloak qui tourne en non-root. Point important à retenir :
+  contrairement à `adminclientsecret` (résolu une seule fois à l'import
+  du realm, donc insensible à un problème de permission survenant après
+  coup), `smtppassword` est relu en clair sur le disque à **chaque envoi
+  d'email**, donc immédiatement impacté. Corrigé par
+  `chmod 644 educi_smtppassword educi_adminclientsecret` (le second par
+  précaution, pour un futur réimport de realm) puis
+  `docker compose -f docker-compose.yml -f docker-compose.prod.yml
+  restart keycloak`. Vérifié avec une inscription réelle
+  (`ec5070571+educitest@gmail.com`) : email de vérification bien reçu.
+- **Nouvelle fonctionnalité admin : suppression définitive d'un
+  compte**. Suite au bug ci-dessus, plusieurs comptes de test s'étaient
+  retrouvés orphelins (créés mais jamais vérifiés). Plutôt qu'un script
+  ponctuel, ajout d'un bouton "supprimer" (icône poubelle) dans
+  `/admin/users`, à côté du lien "Conversations" existant :
+  - `frontend/src/app/api/admin/users/[userId]/route.ts` : nouvelle
+    route `DELETE`, protégée par `requireAdmin`, qui appelle
+    `keycloakAdminFetch(\`/users/\${userId}\`, { method: "DELETE" })`.
+    Suppression **définitive côté Keycloak** (l'identité disparaît du
+    realm, l'email/username redevient donc immédiatement disponible
+    pour une nouvelle inscription) — volontairement limitée à
+    l'identité, sans toucher aux conversations/messages applicatifs en
+    base Postgres, pour rester simple et éviter une suppression en
+    cascade plus large que demandé.
+  - `frontend/src/app/admin/users/page.tsx` : bouton avec confirmation
+    (`window.confirm` nommant l'utilisateur et son email) avant l'appel
+    DELETE, retrait de la ligne de la liste et toast de succès/erreur au
+    retour.
+  - Déployé en prod (`docker compose ... up -d --build frontend`) puis
+    utilisé pour nettoyer les comptes de test orphelins accumulés sur le
+    serveur (comptes jamais vérifiés à cause du bug SMTP ci-dessus) ; il
+    ne reste plus en prod que les deux comptes de démo (`Admin Demo`,
+    `Élève Demo`).
+  - **Point d'attention pour la prochaine session** : le clic sur la
+    poubelle déclenche un `window.confirm()` natif du navigateur, qui
+    bloque toute automatisation navigateur (Claude in Chrome) tant qu'il
+    n'est pas résolu manuellement — normal et attendu, mais à savoir si
+    ce bouton doit un jour être testé par automatisation plutôt qu'à la
+    main.
+- Cycle complet revérifié en prod après nettoyage : inscription → email
+  de vérification reçu → connexion, tout fonctionne.
