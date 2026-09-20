@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { signOut } from "next-auth/react";
+import toast from "react-hot-toast";
 import EduCILogo from "@/components/icons/EduCILogo";
 import Button from "@/components/ui/Button";
 import { cn, getSubjectIcon } from "@/lib/utils";
@@ -60,6 +61,26 @@ export default function ChatSidebar({
   const router = useRouter();
   const { theme, setTheme } = useTheme();
   const [showModeMenu, setShowModeMenu] = useState(false);
+
+  // Termine aussi la session SSO Keycloak (pas seulement le cookie
+  // NextAuth) en redirigeant vers son endpoint de logout — voir
+  // src/app/api/auth/keycloak-logout-url/route.ts pour le contexte complet
+  // du bug que ça corrige (sans ça, "Déconnexion" puis "Se connecter"
+  // reconnectait silencieusement le même compte via le SSO, sans mot de
+  // passe).
+  const handleSignOut = async () => {
+    try {
+      const res = await fetch("/api/auth/keycloak-logout-url");
+      const { logoutUrl } = await res.json();
+      await signOut({ redirect: false });
+      window.location.href = logoutUrl;
+    } catch {
+      toast.error("Erreur lors de la déconnexion");
+      // Filet de sécurité : au moins la session NextAuth locale est
+      // terminée, même si la session Keycloak, elle, survit.
+      signOut({ callbackUrl: "/login" });
+    }
+  };
 
   return (
     <>
@@ -199,7 +220,7 @@ export default function ChatSidebar({
             {theme === "dark" ? "Mode clair" : "Mode sombre"}
           </button>
           <button
-            onClick={() => signOut({ callbackUrl: "/login" })}
+            onClick={handleSignOut}
             className="w-full flex items-center gap-2.5 px-3 py-2 rounded-[var(--radius-md)] hover:bg-[var(--color-danger-subtle)] text-sm text-[var(--color-muted)] hover:text-[var(--color-danger)] transition-colors cursor-pointer"
           >
             <LogOut size={15} />
