@@ -6,6 +6,16 @@ Règle produit importante (voir plan-architecture-microservices.md) :
 les exercices ne doivent JAMAIS apparaître dans une explication de cours.
 On applique donc un filtre strict sur `docType` ("cours" | "exercice") à
 la recherche, jamais les deux mélangés dans le même appel.
+
+Modèle de document (2026-09-20) : chaque document ingéré (cours, exercice,
+œuvre littéraire ou correction) a un `documentId` (UUID) propre, stocké dans
+le payload de chacun de ses chunks/points — c'est la clé de regroupement
+utilisée par `list_documents`/`delete_by_document_id`, PAS `source` (le nom
+de fichier), qui reste stocké uniquement pour affichage et pour la
+compatibilité avec les points ingérés avant l'introduction de `documentId`
+(voir le repli "legacy:<source>" dans `list_documents`). Une "correction"
+porte en plus un `linkedDocumentId` pointant vers le `documentId` de
+l'exercice associé.
 """
 import uuid
 
@@ -35,12 +45,22 @@ class RagPipeline:
     def count_documents(self) -> int:
         return self.qdrant.get_collection(COLLECTION).points_count
 
+    def count_by_document_id(self, document_id: str) -> int:
+        return self.qdrant.count(
+            collection_name=COLLECTION,
+            count_filter=qm.Filter(
+                must=[qm.FieldCondition(key="documentId", match=qm.MatchValue(value=document_id))]
+            ),
+        ).count
+
     def list_documents(self) -> list[dict]:
-        """Liste les documents ingérés, groupés par `source` (nom de
-        fichier) puisqu'un document est éclaté en plusieurs chunks/points à
-        l'ingestion (voir `ingest`). Pagine via `scroll` pour couvrir toute
-        la collection, pas seulement les premiers points."""
-        by_source: dict[str, dict] = {}
+        """Liste les documents ingérés, groupés par `documentId` (un document
+        est éclaté en plusieurs chunks/points à l'ingestion, voir `ingest`).
+        Repli sur `legacy:<source>` pour les points ingérés avant
+        l'introduction de `documentId` (regroupement par nom de fichier,
+        comme avant). Pagine via `scroll` pour couvrir toute la collection,
+        pas seulement les premiers points."""
+        by_doc: dict[str, dict] = {}
         offset = None
         while True:
             points, offset = self.qdrant.scroll(
@@ -51,25 +71,47 @@ class RagPipeline:
                 with_vectors=False,
             )
             for p in points:
-                source = p.payload.get("source", "") or p.id
-                if source not in by_source:
-                    by_source[source] = {
+                source = p.payload.get("source", "") or str(p.id)
+                doc_id = p.payload.get("documentId") or f"legacy:{source}"
+                if doc_id not in by_doc:
+                    by_doc[doc_id] = {
+                        "documentId": doc_id,
                         "source": source,
                         "title": p.payload.get("title", source),
                         "subject": p.payload.get("subject", ""),
                         "gradeLevel": p.payload.get("gradeLevel", ""),
                         "docType": p.payload.get("docType", ""),
+                        "author": p.payload.get("author", ""),
+                        "workTitle": p.payload.get("workTitle", ""),
+                        "linkedDocumentId": p.payload.get("linkedDocumentId", ""),
                         "chunksCount": 0,
                     }
-                by_source[source]["chunksCount"] += 1
+                by_doc[doc_id]["chunksCount"] += 1
             if offset is None:
                 break
 
-        return sorted(by_source.values(), key=lambda d: d["title"])
+        return sorted(by_doc.values(), key=lambda d: d["title"])
+
+    def delete_by_document_id(self, document_id: str) -> int:
+        """Supprime tous les chunks/points d'un document ingéré, identifié
+        par son `documentId`."""
+        count_before = self.count_by_document_id(document_id)
+        if count_before > 0:
+            self.qdrant.delete(
+                collection_name=COLLECTION,
+                points_selector=qm.FilterSelector(
+                    filter=qm.Filter(
+                        must=[qm.FieldCondition(key="documentId", match=qm.MatchValue(value=document_id))]
+                    )
+                ),
+            )
+        return count_before
 
     def delete_by_source(self, source: str) -> int:
-        """Supprime tous les chunks/points d'un document ingéré, identifié
-        par son `source` (nom de fichier à l'ingestion)."""
+        """Supprime tous les chunks/points d'un document ingéré AVANT
+        l'introduction de `documentId`, identifié par son `source` (nom de
+        fichier à l'ingestion) — conservé pour les documents "legacy:..."
+        renvoyés par `list_documents`."""
         count_before = self.qdrant.count(
             collection_name=COLLECTION,
             count_filter=qm.Filter(
@@ -141,21 +183,28 @@ class RagPipeline:
 
         return chunks or ([text[:size]] if text.strip() else [])
 
-    def ingest(self, text: str, metadata: dict) -> int:
-        """metadata attendu : subject, gradeLevel, docType ('cours' ou
-        'exercice'), title, source."""
+    def ingest(self, text: str, metadata: dict, document_id: str | None = None) -> tuple[str, int]:
+        """metadata attendu : subject, gradeLevel, docType ('cours',
+        'exercice', 'oeuvre' ou 'correction'), title, source, et
+        éventuellement author/workTitle/linkedDocumentId.
+
+        Retourne (documentId, nombre de chunks ingérés). Un `document_id`
+        est généré si non fourni — le fournir permet à l'appelant de
+        renvoyer l'id au client avant même la fin de l'ingestion (voir
+        ingestion asynchrone dans app/main.py)."""
+        document_id = document_id or str(uuid.uuid4())
         chunks = self.chunk(text)
         points = [
             qm.PointStruct(
                 id=str(uuid.uuid4()),
                 vector=self.embed(chunk_text),
-                payload={**metadata, "text": chunk_text},
+                payload={**metadata, "documentId": document_id, "text": chunk_text},
             )
             for chunk_text in chunks
         ]
         if points:
             self.qdrant.upsert(collection_name=COLLECTION, points=points)
-        return len(points)
+        return document_id, len(points)
 
     def search(
         self,
@@ -163,6 +212,7 @@ class RagPipeline:
         subject: str | None = None,
         grade_level: str | None = None,
         doc_type: str | None = None,
+        document_id: str | None = None,
         top_k: int = 5,
     ) -> list[dict]:
         must = []
@@ -172,6 +222,8 @@ class RagPipeline:
             must.append(qm.FieldCondition(key="gradeLevel", match=qm.MatchValue(value=grade_level)))
         if doc_type:
             must.append(qm.FieldCondition(key="docType", match=qm.MatchValue(value=doc_type)))
+        if document_id:
+            must.append(qm.FieldCondition(key="documentId", match=qm.MatchValue(value=document_id)))
 
         results = self.qdrant.search(
             collection_name=COLLECTION,
@@ -190,6 +242,7 @@ class RagPipeline:
                 "gradeLevel": r.payload.get("gradeLevel", ""),
                 "docType": r.payload.get("docType", ""),
                 "source": r.payload.get("source", ""),
+                "documentId": r.payload.get("documentId", ""),
             }
             for r in results
         ]

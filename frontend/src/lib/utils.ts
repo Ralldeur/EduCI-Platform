@@ -6,14 +6,11 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 export const GRADE_LEVELS = {
-  PRIMAIRE: [
-    { value: "CP1", label: "CP1" },
-    { value: "CP2", label: "CP2" },
-    { value: "CE1", label: "CE1" },
-    { value: "CE2", label: "CE2" },
-    { value: "CM1", label: "CM1" },
-    { value: "CM2", label: "CM2" },
-  ],
+  // Primaire (CP1-CM2) retire des listes pour l'instant -- le programme
+  // (CURRICULUM dans curriculum.ts) ne couvre de toute facon que
+  // college/lycee aujourd'hui. Les codes restent connus de
+  // normalizeGradeLevel()/KNOWN_GRADE_CODES ci-dessous pour ne pas casser
+  // l'affichage d'un compte existant qui aurait deja ce niveau.
   COLLEGE: [
     { value: "6EME", label: "6ème" },
     { value: "5EME", label: "5ème" },
@@ -28,7 +25,6 @@ export const GRADE_LEVELS = {
 } as const;
 
 export const ALL_GRADE_LEVELS = [
-  ...GRADE_LEVELS.PRIMAIRE,
   ...GRADE_LEVELS.COLLEGE,
   ...GRADE_LEVELS.LYCEE,
 ];

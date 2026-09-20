@@ -1,6 +1,7 @@
 import os
+import uuid
 
-from fastapi import FastAPI, Form, HTTPException, Request, UploadFile
+from fastapi import BackgroundTasks, FastAPI, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 
 from rag.extract import extract_text
@@ -12,14 +13,28 @@ OLLAMA_URL = os.getenv("OLLAMA_URL", "http://ollama:11434")
 app = FastAPI(title="EduCI ML Service")
 pipeline: RagPipeline | None = None
 
-VALID_DOC_TYPES = {"cours", "exercice"}
+VALID_DOC_TYPES = {"cours", "exercice", "oeuvre", "correction"}
 
 # Taille max acceptée pour un fichier à ingérer (voir ingest_lesson) — sans
 # cette limite, `await file.read()` charge le fichier entier en mémoire sans
 # borne, ce qui permet un DoS par upload massif (le process ml-service n'a
 # aucune autre protection de taille en amont : ni gateway, ni Next.js ne
 # posent de limite sur ce endpoint).
-MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 Mo
+# Relevée de 20 à 60 Mo (2026-09-20) pour permettre l'ingestion d'œuvres
+# littéraires complètes en PDF texte (un roman de plusieurs centaines de
+# pages en PDF texte-natif dépasse rarement 10-15 Mo ; au-delà, il s'agit
+# presque toujours d'un PDF scanné/image, que pypdf ne sait de toute façon
+# pas extraire — voir rag/extract.py, pas d'OCR).
+MAX_UPLOAD_BYTES = 60 * 1024 * 1024  # 60 Mo
+
+# Suivi en mémoire des ingestions en tâche de fond, clé = documentId (voir
+# ingest_lesson). Volontairement pas persisté : un job "processing" perdu
+# lors d'un redémarrage du service est un cas limite acceptable pour
+# l'instant (l'admin relance l'ingestion) — /lessons/{document_id}/status
+# retombe de toute façon sur un comptage Qdrant direct si le job n'est plus
+# en mémoire, donc un document déjà terminé reste détecté comme "ready"
+# même après un redémarrage.
+INGESTION_JOBS: dict[str, dict] = {}
 
 
 def require_admin(request: Request) -> None:
@@ -62,24 +77,51 @@ def admin_stats(request: Request):
     return {"totalDocuments": pipeline.count_documents()}
 
 
+def _run_ingestion(document_id: str, text: str, metadata: dict) -> None:
+    """Exécuté en tâche de fond par BackgroundTasks (voir ingest_lesson) —
+    c'est ici que se fait le travail lent (un appel d'embedding Ollama par
+    chunk, potentiellement des centaines pour une œuvre complète), après que
+    la requête HTTP a déjà répondu au client avec documentId + statut
+    "processing"."""
+    try:
+        _, chunks_ingested = pipeline.ingest(text, metadata, document_id=document_id)
+        INGESTION_JOBS[document_id] = {"status": "ready", "chunksIngested": chunks_ingested}
+    except Exception as exc:  # noqa: BLE001 — on veut capturer et exposer n'importe quelle erreur d'ingestion, pas planter le worker en tâche de fond
+        INGESTION_JOBS[document_id] = {"status": "error", "error": str(exc)}
+
+
 @app.post("/lessons/ingest")
 async def ingest_lesson(
     request: Request,
+    background_tasks: BackgroundTasks,
     file: UploadFile,
-    subject: str = Form(...),
+    subject: str = Form(""),
     gradeLevel: str = Form(""),
     docType: str = Form("cours"),
     title: str = Form(""),
+    author: str = Form(""),
+    workTitle: str = Form(""),
+    linkedDocumentId: str = Form(""),
 ):
-    """Ingère un document (cours ou exercice) : extraction du texte,
-    découpage en chunks, embedding et indexation dans Qdrant.
+    """Ingère un document (cours, exercice, œuvre littéraire ou correction) :
+    extraction du texte puis, en tâche de fond, découpage en chunks,
+    embedding et indexation dans Qdrant. Répond immédiatement avec un
+    `documentId` et le statut "processing" — voir GET
+    /lessons/{document_id}/status pour suivre la progression, nécessaire
+    pour les gros documents (œuvres complètes) dont l'embedding chunk par
+    chunk peut prendre plusieurs minutes.
 
-    docType doit être 'cours' ou 'exercice' — jamais autre chose, pour
-    garantir la séparation stricte des deux au moment de la recherche.
+    - docType 'correction' exige `linkedDocumentId` (le documentId de
+      l'exercice associé).
+    - docType 'oeuvre' exige `workTitle` (titre de l'œuvre).
     """
     require_admin(request)
     if docType not in VALID_DOC_TYPES:
-        raise HTTPException(400, f"docType doit être 'cours' ou 'exercice', reçu: {docType!r}")
+        raise HTTPException(400, f"docType doit être l'un de {sorted(VALID_DOC_TYPES)}, reçu: {docType!r}")
+    if docType == "correction" and not linkedDocumentId:
+        raise HTTPException(400, "linkedDocumentId requis pour une correction (documentId de l'exercice associé)")
+    if docType == "oeuvre" and not workTitle:
+        raise HTTPException(400, "workTitle requis pour une œuvre")
 
     content = await file.read()
     if len(content) > MAX_UPLOAD_BYTES:
@@ -104,33 +146,68 @@ async def ingest_lesson(
     if not text.strip():
         raise HTTPException(422, f"Aucun texte extrait de {file.filename}")
 
-    chunks_ingested = pipeline.ingest(
-        text,
-        metadata={
-            "subject": subject,
-            "gradeLevel": gradeLevel,
-            "docType": docType,
-            "title": title or file.filename,
-            "source": file.filename,
-        },
-    )
+    document_id = str(uuid.uuid4())
+    metadata = {
+        "subject": subject,
+        "gradeLevel": gradeLevel,
+        "docType": docType,
+        "title": title or workTitle or file.filename,
+        "source": file.filename,
+        "author": author,
+        "workTitle": workTitle,
+        "linkedDocumentId": linkedDocumentId,
+    }
 
-    return {"file": file.filename, "docType": docType, "chunksIngested": chunks_ingested}
+    INGESTION_JOBS[document_id] = {"status": "processing"}
+    background_tasks.add_task(_run_ingestion, document_id, text, metadata)
+
+    return {"documentId": document_id, "file": file.filename, "docType": docType, "status": "processing"}
+
+
+@app.get("/lessons/{document_id}/status")
+def ingestion_status(document_id: str, request: Request):
+    """Statut d'une ingestion lancée par POST /lessons/ingest — permet à
+    /admin/lessons de faire un polling pendant le traitement en tâche de
+    fond d'un gros document."""
+    require_admin(request)
+    job = INGESTION_JOBS.get(document_id)
+    if job is not None:
+        return job
+    # Job plus en mémoire (redémarrage du service, ou requête tardive) : on
+    # retombe sur un comptage Qdrant direct, qui reste correct pour un
+    # document déjà indexé.
+    count = pipeline.count_by_document_id(document_id)
+    if count > 0:
+        return {"status": "ready", "chunksIngested": count}
+    raise HTTPException(404, "Ingestion inconnue ou expirée")
 
 
 @app.get("/lessons")
 def list_lessons(request: Request):
-    """Documents ingérés dans le RAG, groupés par fichier source (voir
+    """Documents ingérés dans le RAG, groupés par documentId (voir
     RagPipeline.list_documents) — pour l'écran /admin/lessons."""
     require_admin(request)
     return {"documents": pipeline.list_documents()}
 
 
+@app.delete("/lessons/by-document-id/{document_id}")
+def delete_lesson_by_document_id(document_id: str, request: Request):
+    """Supprime tous les chunks d'un document ingéré, identifié par son
+    `documentId`. C'est l'action déclenchée par le bouton supprimer de la
+    liste des documents dans /admin/lessons pour tout document ingéré
+    depuis l'introduction de documentId (2026-09-20)."""
+    require_admin(request)
+    deleted = pipeline.delete_by_document_id(document_id)
+    if deleted == 0:
+        raise HTTPException(404, f"Aucun document trouvé pour le documentId {document_id!r}")
+    return {"documentId": document_id, "chunksDeleted": deleted}
+
+
 @app.delete("/lessons/by-source/{source}")
 def delete_lesson_by_source(source: str, request: Request):
-    """Supprime tous les chunks d'un document ingéré, identifié par son nom
-    de fichier (`source`). C'est l'action déclenchée par le bouton
-    supprimer de la liste des documents dans /admin/lessons."""
+    """Repli pour les documents ingérés AVANT documentId (regroupés comme
+    "legacy:<source>" par list_documents) : supprime tous les chunks d'un
+    document identifié par son nom de fichier (`source`)."""
     require_admin(request)
     deleted = pipeline.delete_by_source(source)
     if deleted == 0:
@@ -153,7 +230,8 @@ class SearchRequest(BaseModel):
     query: str
     subject: str | None = None
     gradeLevel: str | None = None
-    docType: str | None = None  # 'cours' ou 'exercice' — voir note ci-dessous
+    docType: str | None = None  # 'cours', 'exercice', 'oeuvre' ou 'correction' — voir note ci-dessous
+    documentId: str | None = None
     topK: int = 5
 
 
@@ -168,12 +246,16 @@ def rag_search(req: SearchRequest):
     laisser docType=None sur une requête destinée à une explication de
     cours, sous peine de faire remonter un énoncé d'exercice dans le
     contexte d'explication (règle produit non négociable).
+
+    documentId restreint la recherche à un document précis (typiquement une
+    œuvre littéraire) — utilisé pour les conversations scopées à une œuvre.
     """
     results = pipeline.search(
         query=req.query,
         subject=req.subject,
         grade_level=req.gradeLevel,
         doc_type=req.docType,
+        document_id=req.documentId,
         top_k=req.topK,
     )
     return {"results": results}
