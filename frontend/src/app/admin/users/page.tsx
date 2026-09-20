@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Loader2, MessageSquare } from "lucide-react";
+import { Loader2, MessageSquare, Trash2 } from "lucide-react";
+import toast from "react-hot-toast";
 import { getGradeLevelLabel } from "@/lib/utils";
 
 interface UserInfo {
@@ -29,6 +30,37 @@ const ROLE_STYLES: Record<string, string> = {
 export default function AdminUsersPage() {
   const [users, setUsers] = useState<UserInfo[]>([]);
   const [loading, setLoading] = useState(true);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  // Suppression définitive du compte Keycloak (pas une désactivation) —
+  // voir src/app/api/admin/users/[userId]/route.ts. Ne touche pas aux
+  // conversations déjà enregistrées de cet utilisateur.
+  const handleDelete = async (user: UserInfo) => {
+    const label = user.name ?? user.username;
+    if (
+      !confirm(
+        `Supprimer définitivement le compte de "${label}" (${user.email ?? user.username}) ? Cette action est irréversible.`
+      )
+    ) {
+      return;
+    }
+    setDeletingId(user.id);
+
+    try {
+      const res = await fetch(`/api/admin/users/${user.id}`, { method: "DELETE" });
+      if (res.ok) {
+        toast.success(`Compte de "${label}" supprimé`);
+        setUsers((prev) => prev.filter((u) => u.id !== user.id));
+      } else {
+        const data = await res.json().catch(() => ({}));
+        toast.error(data.error ?? "Erreur lors de la suppression");
+      }
+    } catch {
+      toast.error("Erreur de connexion");
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   useEffect(() => {
     fetch("/api/admin/users")
@@ -91,15 +123,29 @@ export default function AdminUsersPage() {
                   <td className="px-4 py-3 text-[var(--color-muted)]">
                     {user.createdAt ? new Date(user.createdAt).toLocaleDateString("fr-FR") : "—"}
                   </td>
-                  <td className="px-4 py-3 text-right">
-                    <Link
-                      href={`/admin/users/${user.id}/conversations?name=${encodeURIComponent(user.name ?? user.username)}`}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-[var(--radius-md)] text-xs font-medium text-[var(--color-primary)] hover:bg-[var(--color-surface-hover)] transition-colors"
-                      title="Consulter les conversations"
-                    >
-                      <MessageSquare size={14} />
-                      Conversations
-                    </Link>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center justify-end gap-1">
+                      <Link
+                        href={`/admin/users/${user.id}/conversations?name=${encodeURIComponent(user.name ?? user.username)}`}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-[var(--radius-md)] text-xs font-medium text-[var(--color-primary)] hover:bg-[var(--color-surface-hover)] transition-colors"
+                        title="Consulter les conversations"
+                      >
+                        <MessageSquare size={14} />
+                        Conversations
+                      </Link>
+                      <button
+                        onClick={() => handleDelete(user)}
+                        disabled={deletingId === user.id}
+                        className="p-1.5 rounded-[var(--radius-sm)] hover:bg-[var(--color-danger-subtle)] hover:text-[var(--color-danger)] text-[var(--color-muted)] transition-colors cursor-pointer disabled:opacity-50"
+                        title="Supprimer ce compte"
+                      >
+                        {deletingId === user.id ? (
+                          <Loader2 size={14} className="animate-spin" />
+                        ) : (
+                          <Trash2 size={14} />
+                        )}
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
