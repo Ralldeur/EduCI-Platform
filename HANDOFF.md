@@ -5,7 +5,7 @@ secrète dans ce fichier (il est suivi par git) — voir `SECRETS-TEMPORAIRE.md`
 (hors dépôt, sur le Bureau) pour les vraies valeurs actuelles, à transférer
 dans un gestionnaire de mots de passe puis à supprimer.
 
-Dernière mise à jour : 2026-09-18.
+Dernière mise à jour : 2026-09-20.
 
 ---
 
@@ -399,3 +399,56 @@ d'infrastructure plus large que Brevo lui-même.
   n'active pas la politique `unless-stopped`, contrairement à un vrai
   crash/OOM/coupure. Échec de test attendu, pas inquiétant — le vrai test
   sera le prochain incident réel.
+
+---
+
+## 11. Journal de session — 2026-09-20
+
+Suite à la demande "testons le tout" : passage de test complet de
+l'application (exercices QCM/question ouverte/Vrai-Faux, correction,
+révélation de réponse, paramètres, panel `/admin` en entier avec le compte
+`admin.demo`), en local puis en prod. Deux bugs UI trouvés et corrigés,
+sans lien avec les incidents infra des sessions précédentes :
+
+- **Tuiles de l'écran d'accueil `/chat` non fonctionnelles** : les 5
+  cartes "Discussion / Exercices / Correction / Quiz / Révision" étaient
+  de simples `<div>` sans `onClick` — un style `hover:` laissait croire
+  qu'elles étaient cliquables, mais rien ne se passait (confirmé : pas de
+  navigation, pas d'erreur console, absentes de l'arbre d'accessibilité
+  interactif). Le menu "Nouvelle conversation" de la sidebar
+  (`ChatSidebar.tsx`) faisait déjà exactement ce travail pour les 5 mêmes
+  modes (`ConversationMode` : `CHAT`/`EXERCISE`/`CORRECTION`/`QUIZ`/
+  `REVISION`) — repris directement dans `frontend/src/app/chat/page.tsx`,
+  qui crée maintenant la conversation dans le bon mode au clic.
+- **"Déconnexion" incomplète (session SSO Keycloak persistante)** :
+  `signOut()` de next-auth ne supprime que le cookie de session NextAuth,
+  jamais la session SSO côté Keycloak lui-même. Conséquence concrète :
+  après un clic sur "Déconnexion", recliquer sur "Se connecter" (sans
+  ressaisir aucun identifiant) reconnectait silencieusement au même
+  compte — sur un poste partagé, ce n'est donc pas une vraie déconnexion.
+  Corrigé par une nouvelle route `frontend/src/app/api/auth/
+  keycloak-logout-url/route.ts`, qui construit l'URL de l'
+  `end_session_endpoint` Keycloak à partir de l'`id_token` de la session
+  (via `id_token_hint`, pour éviter l'écran de confirmation Keycloak) ;
+  `ChatSidebar.tsx` y redirige le navigateur juste après le `signOut()`
+  local. Vérifié de bout en bout (déconnexion puis reclic sur "Se
+  connecter" → vrai formulaire Keycloak avec champs vides) en local ET en
+  prod.
+- Commit `e4754bd` (`fix(frontend): active les tuiles d'accueil du chat
+  et corrige la deconnexion Keycloak incomplete`), déployé en prod via
+  `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+  --build frontend`.
+- **Note méthodologique** : lors du premier essai de déploiement local,
+  l'utilisateur a recollé par erreur le log du build précédent au lieu
+  d'un nouveau — repéré car la liste des routes générées par
+  `next build` ne listait pas la nouvelle route API, et confirmé en
+  interrogeant directement `/api/auth/keycloak-logout-url` (404/erreur
+  NextAuth plutôt que la réponse attendue). À vérifier systématiquement
+  après un rebuild annoncé : la liste des routes dans le log `next build`
+  doit refléter les fichiers réellement ajoutés/modifiés.
+- Reste de la passe de tests (exercices QCM/ouverts/Vrai-Faux, correction
+  et révélation de réponse, `/settings`, dashboard admin, liste
+  utilisateurs, consultation lecture-seule des conversations, gestion des
+  leçons RAG) : tout fonctionne, rien d'autre à signaler. Un seul 502
+  isolé sur `/api/exercises/generate`, non reproduit au réessai immédiat
+  avec les mêmes paramètres (aléa ponctuel côté Groq, pas un bug).
