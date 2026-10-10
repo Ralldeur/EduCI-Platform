@@ -15,7 +15,7 @@ export default function ChatLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const { data: session, status } = useSession();
+  const { data: session, status, update } = useSession();
   const router = useRouter();
   const pathname = usePathname();
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
@@ -54,8 +54,26 @@ export default function ChatLayout({
     }
   }, [pathname, status, fetchConversations]);
 
+  useEffect(() => {
+    if (status !== "authenticated") return;
+
+    const handleConversationsUpdated = () => {
+      void fetchConversations();
+    };
+    window.addEventListener("educi:conversations-updated", handleConversationsUpdated);
+    return () => {
+      window.removeEventListener("educi:conversations-updated", handleConversationsUpdated);
+    };
+  }, [status, fetchConversations]);
+
   const handleNewConversation = async (mode: ConversationMode) => {
     try {
+      const refreshedSession = await update();
+      if (refreshedSession?.error === "RefreshAccessTokenError") {
+        toast.error("Ta session a expiré. Reconnecte-toi pour créer une discussion.");
+        return;
+      }
+
       const res = await fetch("/api/conversations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

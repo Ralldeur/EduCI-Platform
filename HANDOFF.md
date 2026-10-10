@@ -5,7 +5,7 @@ secrète dans ce fichier (il est suivi par git) — voir `SECRETS-TEMPORAIRE.md`
 (hors dépôt, sur le Bureau) pour les vraies valeurs actuelles, à transférer
 dans un gestionnaire de mots de passe puis à supprimer.
 
-Dernière mise à jour : 2026-09-20.
+Dernière mise à jour : 2026-10-11.
 
 ---
 
@@ -511,3 +511,39 @@ Deux sujets traités à la suite de la passe de tests du point 11 :
     main.
 - Cycle complet revérifié en prod après nettoyage : inscription → email
   de vérification reçu → connexion, tout fonctionne.
+
+---
+
+## 13. Journal de session — 2026-10-10/11
+
+Deux chantiers locaux ont été avancés : fiabilité des exercices de maths et
+création/actualisation des discussions.
+
+- **Génération d'exercices** (`chat-service/src/index.js`,
+  `chat-service/src/mathCheck.js`, `chat-service/src/curriculum.js`) :
+  validation serveur plus stricte des plans et réponses, vérification
+  symbolique de dérivées en un point, et audit des contextes concrets pour
+  repérer certaines valeurs physiques négatives. Le mode `challenge` permet
+  de garder un contexte impossible uniquement si l'élève doit explicitement
+  en démontrer l'incohérence. Vérifié avec des calculs ciblés et des appels à
+  l'API locale. Limite : l'audit de non-négativité échantillonne seulement le
+  début du domaine et ne prouve pas la propriété sur tout le domaine.
+- **Création de discussions** : capture utilisateur montrant « Erreur lors
+  de la création ». Les logs locaux ont révélé des refus de JWT expirés par
+  le gateway et des échecs de refresh Keycloak (`invalid_grant: Token is not
+  active`). Le frontend met maintenant à jour la session avant de créer une
+  discussion, évite de relayer un access token expiré/connu invalide, redirige
+  vers une vraie reconnexion si le refresh échoue, et vérifie la session
+  chaque minute.
+- **Liste des discussions** : elle ne se rafraîchissait qu'au changement de
+  route ou après rechargement. Un événement client déclenche maintenant son
+  rafraîchissement après l'envoi d'un message, ce qui actualise le titre et
+  le compteur sans recharger la page.
+- **Vérifications locales** : `npx tsc --noEmit` et le build Docker du
+  frontend passent. Une discussion créée, un message envoyé et la mise à jour
+  immédiate de la liste ont été vérifiés en UI locale. Après attente au-delà
+  des 15 minutes de durée du token, l'utilisateur a confirmé le renouvellement
+  automatique. Le cas où Keycloak renvoie `invalid_grant` reste géré par une
+  reconnexion, mais sa cause locale profonde n'est pas identifiée.
+- **Déploiement** : ces changements ne sont vérifiés qu'en local et ne sont
+  pas déployés en production.

@@ -233,6 +233,11 @@ export default function ConversationPage() {
           },
         ]);
       }
+
+      // Le chat-service met à jour le titre et le nombre de messages en base
+      // pendant l'envoi. Rafraîchir la sidebar pour refléter ces changements
+      // sans attendre un changement de route ou un rechargement manuel.
+      window.dispatchEvent(new Event("educi:conversations-updated"));
     } catch {
       toast.error("Erreur de communication avec l'IA");
     } finally {

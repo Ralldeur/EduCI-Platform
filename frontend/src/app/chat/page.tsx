@@ -55,13 +55,19 @@ const QUICK_START_ITEMS: {
 
 export default function ChatHome() {
   const router = useRouter();
-  const { data: session } = useSession();
+  const { data: session, update } = useSession();
   const [loadingMode, setLoadingMode] = useState<ConversationMode | null>(null);
 
   const handleQuickStart = async (mode: ConversationMode) => {
     if (loadingMode) return;
     setLoadingMode(mode);
     try {
+      const refreshedSession = await update();
+      if (refreshedSession?.error === "RefreshAccessTokenError") {
+        toast.error("Ta session a expiré. Reconnecte-toi pour créer une discussion.");
+        return;
+      }
+
       const res = await fetch("/api/conversations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

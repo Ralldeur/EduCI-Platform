@@ -225,6 +225,17 @@ export const authOptions: NextAuthOptions = {
  */
 export async function getAccessToken(req: NextRequest): Promise<string | undefined> {
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
+  // getToken() décode le cookie mais n'exécute pas le callback jwt() de
+  // NextAuth. Si le rafraîchissement a échoué (ou si le token est déjà expiré),
+  // ne relaie donc jamais cet ancien access_token au gateway.
+  if (
+    !token?.accessToken ||
+    token.error ||
+    (typeof token.accessTokenExpires === "number" &&
+      Date.now() >= token.accessTokenExpires - 30_000)
+  ) {
+    return undefined;
+  }
   return token?.accessToken;
 }
 
