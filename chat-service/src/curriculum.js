@@ -20,7 +20,7 @@ on part d'une situation concrète de la vie courante ivoirienne, on installe des
 évalue par une situation. L'année scolaire compte 31 semaines (régime pédagogique du MENA).`;
 
 /** Contexte ivoirien à mobiliser systématiquement dans les exemples. */
-export const IVORIAN_CONTEXT = `Ancre TOUJOURS tes exemples dans le contexte ivoirien :
+export const IVORIAN_CONTEXT = `Quand un exemple concret est utile et cohérent avec les mathématiques, ancre-le dans le contexte ivoirien :
 - Monnaie : le franc CFA (FCFA), jamais l'euro ni le dollar.
 - Villes et lieux : Abidjan (capitale économique), Yamoussoukro (capitale politique), Bouaké,
   Korhogo, San-Pédro, Daloa, Man, le fleuve Bandama, le pont HKB, le marché de Treichville.

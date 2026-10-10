@@ -441,7 +441,8 @@ app.post("/exercises/generate", async (req, res) => {
   const curriculumBlock = buildCurriculumContext(gradeLevel, subject, serie);
   const exam = IVORIAN_EXAMS[getCycle(gradeLevel)];
   const typeInstruction = EXERCISE_TYPE_INSTRUCTIONS[type ?? "OPEN"] ?? EXERCISE_TYPE_INSTRUCTIONS.OPEN;
-  const exerciseCount = count ?? 3;
+  const requestedCount = Number(count);
+  const exerciseCount = Number.isInteger(requestedCount) && requestedCount > 0 ? requestedCount : 3;
 
   const sharedContext = `Génère ${exerciseCount} exercices de ${subject} pour un élève de ${gradeLevel} en Côte d'Ivoire.
 ${topic ? `Sujet spécifique : ${topic}` : ""}
@@ -454,7 +455,7 @@ ${curriculumBlock}
 
 Contraintes :
 - Reste STRICTEMENT dans le programme ivoirien ci-dessus pour ce niveau (pas de notions hors-programme).
-- Ancre les énoncés dans le contexte ivoirien (FCFA, villes ivoiriennes, cacao/café, prénoms locaux) ; n'utilise jamais l'euro ni le dollar.
+- Quand une situation concrète est cohérente avec les valeurs et le domaine mathématique, ancre-la en Côte d'Ivoire (FCFA, villes, cacao/café, prénoms locaux). Ne force pas une fonction dans un contexte physique qui rendrait ses valeurs impossibles ; garde alors un exercice mathématique abstrait. N'utilise jamais l'euro ni le dollar.
 - Inspire-toi du format de l'examen national : ${exam.name} (${exam.full}).${ragBlock}`;
 
   // --- Étape 1/2 : vérification silencieuse des paramètres numériques ---
@@ -483,6 +484,8 @@ Tâche : NE RÉDIGE AUCUN énoncé. Pour chacun des ${exerciseCount} exercices �
 3. Calcule explicitement chacune de ces valeurs à partir des paramètres choisis (ex. remplace x par chaque valeur dans l'expression de f(x) et effectue le calcul complet jusqu'au résultat final).
 4. Compare chaque résultat obtenu à l'étape 3 à ce que tu comptes annoncer dans l'énoncé. S'il y a le moindre écart, corrige les paramètres et RECOMMENCE le calcul depuis l'étape 3 — ne passe à l'exercice suivant qu'une fois chaque valeur confirmée exacte.
 5. Privilégie des résultats exacts et simples (entier ou fraction simple) adaptés au niveau ${gradeLevel}.
+6. Choisis un contexte seulement s'il respecte le domaine et le sens des valeurs. Une récolte, une distance, un âge, une masse ou un effectif ne peut pas être négatif. Pour une grandeur forcément non négative définie à partir d'un instant de départ, vérifie aussi l'expression au départ et aux deux premiers pas après le départ. Si une valeur est impossible, change le contexte ou garde un exercice abstrait ; ne change pas une formule imposée par le sujet.
+7. Exception pédagogique : si le sujet demande explicitement à l'élève de tester la validité ou la cohérence d'un modèle concret, conserve le contexte comme contre-exemple et fais de l'impossibilité la question à résoudre. Ne présente jamais le modèle impossible comme valide. Dans ce cas, utilise le mode "challenge".
 
 Ce raisonnement (étapes 1 à 4) doit rester interne — n'expose jamais le détail des calculs dans le JSON final, seulement les résultats.
 
@@ -492,21 +495,29 @@ Réponds UNIQUEMENT avec ce JSON compact (pas d'énoncé rédigé, pas d'explica
     {
       "idea": "angle/sujet précis de l'exercice",
       "params": "paramètres numériques validés (équation, valeurs, résultat attendu)",
-      "verification": { "expression calculée (ex. f(2))": "valeur exacte obtenue au calcul" }
+      "verification": { "expression calculée (ex. f(2))": "valeur exacte obtenue au calcul" },
+      "contextAudit": {
+        "mode": "nonnegative",
+        "expression": "expression de f(x), vide si exercice abstrait ou sans fonction",
+        "domainStart": 0
+      }
     }
   ],
   "checks": [
     { "type": "geometric", "u0": 100000, "q": 1.02, "n": 10, "claimed": 121899.44 },
     { "type": "arithmetic", "u0": 5, "r": 3, "n": 12, "claimed": 41 },
-    { "type": "function_eval", "expr": "(x^2+2)/(x-1)", "x": 2, "claimed": 6 }
+    { "type": "function_eval", "expr": "(x^2+2)/(x-1)", "x": 2, "claimed": 6 },
+    { "type": "derivative_eval", "expr": "x^3-2*x", "x": 2, "claimed": 10 }
   ]
 }
 Le champ "verification" doit contenir CHAQUE valeur calculée à l'étape 3, avec exactement la même valeur que celle qui apparaîtra dans l'énoncé final — ces valeurs serviront de référence pour l'étape de rédaction.
-Le champ "checks" (tableau, peut rester vide) est recalculé indépendamment côté serveur pour repérer une erreur d'arithmétique — remplis-le UNIQUEMENT pour les valeurs de l'étape 3 qui correspondent EXACTEMENT à l'un de ces 3 cas (des nombres, pas de texte ni de fraction littérale) :
+Chaque plan doit aussi fournir "contextAudit" : mode "nonnegative" pour une grandeur réelle nécessairement non négative, "signed" pour une grandeur réelle pouvant être négative, "abstract" si l'exercice ne prétend pas modéliser une situation concrète, ou "challenge" uniquement si l'élève doit explicitement détecter qu'un modèle concret est impossible ou incohérent. Avec "challenge", inscris cette détection comme objectif central dans "idea" et fais apparaître la question dans l'énoncé. Ne choisis pas "challenge" pour excuser une incohérence accidentelle. En mode "nonnegative", donne l'expression mathématique de la quantité et la valeur numérique du début réel de son domaine (par exemple 0 pour un temps écoulé). Le serveur vérifiera cette expression au début du domaine et aux deux valeurs suivantes.
+Le champ "checks" est recalculé indépendamment côté serveur pour repérer une erreur d'arithmétique. Pour CHAQUE valeur calculée qui correspond à l'un des 4 cas ci-dessous, ajoute obligatoirement un check numérique. Il ne peut être vide que si aucun calcul prévu ne correspond à ces cas. Utilise des nombres, pas du texte ni une fraction littérale :
 - suite géométrique : u_n = u0 × q^n → {"type":"geometric","u0":...,"q":...,"n":...,"claimed":...}
 - suite arithmétique : u_n = u0 + n×r → {"type":"arithmetic","u0":...,"r":...,"n":...,"claimed":...}
 - image f(x) d'une fonction polynomiale/rationnelle à une variable en un point → {"type":"function_eval","expr":"expression avec x, ex (x^2+2)/(x-1)","x":...,"claimed":...}
-N'ajoute RIEN dans "checks" pour un autre type de calcul (dérivée, limite, nombre complexe, statistiques, preuve, équation à résoudre...) — laisse le tableau vide plutôt que de forcer un cas qui ne correspond pas exactement.`;
+- valeur de la dérivée f'(a) d'une fonction à une variable en un point → {"type":"derivative_eval","expr":"expression de f(x)","x":...,"claimed":...}. Le serveur recalcule f'(x) symboliquement puis l'évalue au point indiqué ; ce contrôle valide cette valeur ponctuelle, pas à lui seul toute une étude de fonction.
+N'ajoute RIEN dans "checks" pour un autre type de calcul (limite, intégrale, nombre complexe, statistiques, preuve, équation à résoudre...) — laisse le tableau vide plutôt que de forcer un cas qui ne correspond pas exactement.`;
 
   // Un seul appel à l'étape 1, qui renvoie plans + checks déjà parsés (best
   // effort : un JSON illisible donne des tableaux vides plutôt qu'une
@@ -526,7 +537,24 @@ N'ajoute RIEN dans "checks" pour un autre type de calcul (dérivée, limite, nom
     );
     try {
       const parsed = JSON.parse(raw);
-      return { plans: parsed?.plans ?? [], checks: parsed?.checks ?? [] };
+      const plans = Array.isArray(parsed?.plans) ? parsed.plans : [];
+      const checks = Array.isArray(parsed?.checks) ? parsed.checks : [];
+      const contextChecks = plans.map((plan, planIndex) => {
+        const audit = plan?.contextAudit;
+        if (audit?.mode === "nonnegative") {
+          return {
+            type: "nonnegative_samples",
+            expr: audit.expression,
+            domainStart: audit.domainStart,
+            planIndex,
+          };
+        }
+        if (["signed", "abstract", "challenge"].includes(audit?.mode)) {
+          return { type: "context_audit", mode: audit.mode, planIndex };
+        }
+        return { type: "invalid_context_audit", planIndex };
+      });
+      return { plans, checks: [...checks, ...contextChecks] };
     } catch (err) {
       console.error("[chat-service] réponse IA non-JSON pour la vérification exercices:", raw);
       return { plans: [], checks: [] };
@@ -550,9 +578,8 @@ N'ajoute RIEN dans "checks" pour un autre type de calcul (dérivée, limite, nom
   // mathCheck.js pour le détail et les limites de couverture) et, en cas
   // d'écart au-delà de la tolérance, on relance l'étape 1 UNE fois plutôt
   // que de laisser passer une valeur fausse jusqu'à l'élève. Une seule
-  // relance (pas de boucle) : au-delà, mieux vaut continuer avec la
-  // meilleure tentative disponible que de multiplier les appels Groq pour
-  // un défaut qui reste rare.
+  // relance (pas de boucle) : si l'écart persiste, on bloque la réponse
+  // plutôt que de présenter un résultat incohérent à l'élève.
   let verification = verifyChecks(checks);
   // Diagnostic (même logique que le log "budget Groq" existant) : combien
   // de checks l'étape 1 a-t-elle rempli, et combien sont couverts par le
@@ -578,36 +605,41 @@ N'ajoute RIEN dans "checks" pour un autre type de calcul (dérivée, limite, nom
         verification = retryVerification;
       } else {
         console.warn(
-          "[chat-service] garde-fou de calcul : la relance ne corrige pas l'écart, on continue avec la meilleure tentative disponible —",
+          "[chat-service] garde-fou de calcul : la relance n'a pas corrigé l'écart —",
           JSON.stringify(retryVerification.results)
         );
-        // On garde la relance si elle a au moins produit des plans (mieux
-        // qu'une tentative vide), même si son propre recalcul échoue
-        // encore — sinon on reste sur la tentative initiale.
-        if (retry.plans.length > 0) {
-          plans = retry.plans;
-          checks = retry.checks;
-        }
+        return res.status(502).json({
+          error: "Je n'ai pas pu vérifier la cohérence des calculs proposés. Réessaie avec un autre sujet ou une autre demande.",
+        });
       }
     } catch (err) {
       console.error(
-        "[chat-service] garde-fou de calcul : échec de la relance de l'étape 1, on continue avec la tentative initiale:",
+        "[chat-service] garde-fou de calcul : échec de la relance de l'étape 1:",
         err.message
       );
+      return res.status(502).json({
+        error: "Je n'ai pas pu vérifier la cohérence des calculs proposés. Réessaie avec un autre sujet ou une autre demande.",
+      });
     }
   }
 
+  if (plans.length !== exerciseCount) {
+    console.warn(
+      `[chat-service] vérification incomplète : ${plans.length}/${exerciseCount} plan(s) reçu(s)`
+    );
+    return res.status(502).json({
+      error: "Je n'ai pas pu préparer et vérifier tous les exercices demandés. Réessaie dans un instant.",
+    });
+  }
+
   // --- Étape 2/2 : rédaction finale à partir des paramètres validés ---
-  // reasoning_effort "none" : plus besoin de re-vérifier la cohérence
-  // numérique (déjà fait à l'étape 1), tout le budget va à la sortie
-  // visible — appel rapide et prévisible.
-  // On répercute les valeurs de "verification" (étape 1) dans le prompt de
-  // rédaction : elles ancrent explicitement les chiffres que l'énoncé et la
-  // correction doivent annoncer, plutôt que de laisser l'étape 2 les
-  // redéduire (et potentiellement diverger) à partir de "params" seul.
+  // reasoning_effort "none" : les vérifications précédentes sont terminées,
+  // tout le budget va à la sortie visible.
+  // On transmet les valeurs de référence de l'étape 1 à la rédaction,
+  // tout en demandant une nouvelle vérification avant de les utiliser.
   const plansBlock =
     plans.length > 0
-      ? `\n\nParamètres déjà vérifiés à utiliser tels quels, sans aucun recalcul ni vérification :\n${plans
+      ? `\n\nParamètres et valeurs de référence issus de l'étape précédente. Vérifie-les à partir des énoncés avant de les utiliser :\n${plans
           .map((p, i) => {
             const verif =
               p.verification && typeof p.verification === "object" && !Array.isArray(p.verification)
@@ -615,18 +647,23 @@ N'ajoute RIEN dans "checks" pour un autre type de calcul (dérivée, limite, nom
                     .map(([k, v]) => `${k} = ${v}`)
                     .join(", ")}]`
                 : "";
-            return `${i + 1}. ${p.idea} — ${p.params}${verif}`;
+            const context = p.contextAudit
+              ? ` [cadre : ${p.contextAudit.mode}${
+                  p.contextAudit.mode === "nonnegative"
+                    ? `, expression=${p.contextAudit.expression}, domaine à partir de x=${p.contextAudit.domainStart}`
+                    : ""
+                }]`
+              : "";
+            return `${i + 1}. ${p.idea} — ${p.params}${verif}${context}`;
           })
           .join("\n")}`
       : "";
 
   const draftPrompt = `${sharedContext}${plansBlock}
 
-Rédige maintenant les ${exerciseCount} exercices complets (énoncé + réponse + explication) à partir des paramètres ci-dessus déjà validés. Traite-les comme des faits définitifs et non négociables : ne les recalcule pas, ne les re-vérifie pas.
+Rédige maintenant les ${exerciseCount} exercices complets (énoncé + réponse + explication). Les énoncés, réponses et explications doivent être cohérents entre eux et avec les calculs. Vérifie que chaque réponse découle de l'énoncé et que les étapes de la correction aboutissent au résultat annoncé. Respecte aussi le cadre indiqué pour chaque exercice : une grandeur réelle non négative ne doit jamais prendre une valeur négative sur le domaine annoncé. Si une situation concrète ne convient pas à la fonction, présente l'exercice de façon abstraite plutôt que de donner une interprétation fausse. Exception : si le cadre est "challenge", l'énoncé doit demander explicitement si le modèle est cohérent et la correction doit démontrer pourquoi il est impossible ; ne présente jamais les valeurs impossibles comme réalistes.
 
-CAS PARTICULIER IMPORTANT — un calcul que tu rédiges semble contredire une valeur déjà fournie : cela peut arriver (ex. tu re-dérives une fonction "pour expliquer la méthode" et tombes sur un résultat différent de celui fourni). La règle est stricte et non négociable : tu ignores silencieusement ta propre reformulation, tu écris directement la valeur fournie comme si elle découlait naturellement du calcul que tu rédiges, et tu n'exprimes JAMAIS ce doute d'aucune façon — pas de phrase, pas d'aparté, pas de parenthèse, pas de point d'interrogation après un résultat. Aucune mention de « les paramètres fournis », « l'instruction dit », ou toute autre référence à ce prompt ou à un possible écart ne doit jamais apparaître dans la copie remise à l'élève : à ses yeux, il n'y a jamais eu qu'un seul calcul, celui qui aboutit à la valeur fournie.
-Pour tout calcul annexe non couvert par ces paramètres (limite, dérivée, signe, etc.), rédige-le directement, sans hésitation ni retour en arrière visible : jamais de mots ou tournures comme « attends », « en fait », « non », « non, mieux », « ou alors », « cependant », « attention », « il y a une incohérence », « réexaminons », « pour simplifier », ou toute autre trace de tâtonnement, de doute ou de méta-commentaire sur ta propre rédaction. La correction doit se lire comme si elle avait été juste et certaine du tout premier coup, sans qu'aucune étape intermédiaire n'ait jamais été remise en cause.
-
+Si tu repères une contradiction ou si tu ne peux pas vérifier un résultat, ne l'invente pas et ne la masque pas : réponds uniquement avec {"error":"calcul incohérent"}. L'API indiquera que la génération a échoué et demandera une nouvelle tentative. Pour les calculs qui ne sont pas couverts par les vérifications numériques, sois prudent et n'affirme pas un résultat dont tu n'es pas sûr.
 Réponds en JSON avec le format suivant :
 {
   "exercises": [
@@ -658,8 +695,30 @@ Réponds en JSON avec le format suivant :
   }
 
   try {
-    const exercises = JSON.parse(raw);
-    res.json(exercises);
+    const result = JSON.parse(raw);
+    if (result?.error) {
+      return res.status(502).json({
+        error: "Je n'ai pas pu produire des exercices dont les calculs sont cohérents. Réessaie avec un autre sujet ou une autre demande.",
+      });
+    }
+    if (
+      !Array.isArray(result?.exercises) ||
+      result.exercises.length !== exerciseCount ||
+      result.exercises.some(
+        (exercise) =>
+          typeof exercise?.question !== "string" ||
+          typeof exercise?.answer !== "string" ||
+          typeof exercise?.explanation !== "string" ||
+          (type === "QCM" &&
+            (!Array.isArray(exercise?.options) ||
+              exercise.options.length !== 4 ||
+              exercise.options.some((option) => typeof option !== "string")))
+      )
+    ) {
+      console.error("[chat-service] réponse IA incomplète ou invalide pour exercises/generate");
+      return res.status(502).json({ error: "La génération des exercices a échoué. Réessaie dans un instant." });
+    }
+    res.json(result);
   } catch (err) {
     console.error("[chat-service] réponse IA non-JSON pour exercises/generate:", raw);
     res.status(502).json({ error: "Réponse invalide de l'IA" });

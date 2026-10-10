@@ -1,4 +1,4 @@
-import { evaluate } from "mathjs";
+import { derivative, evaluate } from "mathjs";
 
 // Garde-fou de recalcul programmatique pour /exercises/generate — voir
 // l'audit RAG du 2026-09-04 : deux erreurs numériques confirmées ont
@@ -12,12 +12,15 @@ import { evaluate } from "mathjs";
 //
 // COUVERT : suite géométrique (u_n = u0 × q^n), suite arithmétique
 // (u_n = u0 + n×r), image d'une fonction polynomiale/rationnelle simple en
-// un point (f(x) pour un x donné, expression à une variable).
+// un point (f(x) pour un x donné), et valeur d'une dérivée en un point
+// (f'(a), calculée symboliquement puis évaluée en a). Pour un contexte
+// concret avec une grandeur non négative, on vérifie aussi l'expression sur
+// trois valeurs consécutives au début du domaine annoncé.
 // NON COUVERT (volontairement, pour rester réalisable en une session) :
-// dérivées, limites, nombres complexes, statistiques/régression, preuves
-// par récurrence, équations à résoudre, tout calcul à plusieurs variables
-// ou nécessitant une manipulation symbolique. L'étape 1 n'est pas obligée
-// de remplir "checks" pour ces cas — voir verifyPrompt dans index.js.
+// limites, intégrales, nombres complexes, statistiques/régression, preuves
+// par récurrence, équations à résoudre, dérivées symboliques complètes et
+// tout calcul à plusieurs variables. L'étape 1 n'est pas obligée de remplir
+// "checks" pour ces cas — voir verifyPrompt dans index.js.
 
 // Tolérance : les valeurs annoncées dans un énoncé sont souvent arrondies
 // (à l'unité, au dixième...) par le modèle avant d'être écrites dans les
@@ -104,17 +107,83 @@ function checkFunctionEval(check) {
   return { computed, claimed, ok: withinTolerance(computed, claimed) };
 }
 
+function checkDerivativeEval(check) {
+  if (typeof check.expr !== "string" || !check.expr.trim()) {
+    return { skipped: true, reason: "expression manquante" };
+  }
+  const x = toNumber(check.x);
+  const claimed = toNumber(check.claimed);
+  if (!Number.isFinite(x) || !Number.isFinite(claimed)) {
+    return { skipped: true, reason: "x/claimed non numériques" };
+  }
+
+  let computed;
+  try {
+    computed = derivative(check.expr, "x").evaluate({ x });
+  } catch (err) {
+    return { skipped: true, reason: `dérivée illisible par mathjs: ${err.message}` };
+  }
+  if (typeof computed !== "number" || !Number.isFinite(computed)) {
+    return { skipped: true, reason: "dérivée non numérique en ce point" };
+  }
+  return { computed, claimed, ok: withinTolerance(computed, claimed) };
+}
+
+function checkNonnegativeSamples(check) {
+  if (typeof check.expr !== "string" || !check.expr.trim()) {
+    return { ok: false, reason: "expression manquante pour l'audit du contexte" };
+  }
+  const domainStart = toNumber(check.domainStart);
+  if (!Number.isFinite(domainStart)) {
+    return { ok: false, reason: "début du domaine non numérique" };
+  }
+
+  let samples;
+  try {
+    samples = [domainStart, domainStart + 1, domainStart + 2].map((x) => {
+      const value = evaluate(check.expr, { x });
+      if (typeof value !== "number" || !Number.isFinite(value)) {
+        throw new Error(`valeur non numérique pour x=${x}`);
+      }
+      return { x, value };
+    });
+  } catch (err) {
+    return { ok: false, reason: `expression non calculable pour l'audit du contexte: ${err.message}` };
+  }
+  const negative = samples.filter(({ value }) => value < -1e-10);
+  return {
+    samples,
+    ok: negative.length === 0,
+    reason: negative.length > 0 ? "une grandeur déclarée non négative prend une valeur négative" : undefined,
+  };
+}
+
+function checkContextAudit(check) {
+  if (["signed", "abstract", "challenge"].includes(check.mode)) return { ok: true };
+  return { ok: false, reason: "type de contexte inconnu" };
+}
+
+function checkInvalidContextAudit(check) {
+  return { ok: false, reason: check.reason || "audit de contexte manquant ou incomplet" };
+}
+
 const CHECKERS = {
   geometric: checkGeometric,
   arithmetic: checkArithmetic,
   function_eval: checkFunctionEval,
+  derivative_eval: checkDerivativeEval,
+  nonnegative_samples: checkNonnegativeSamples,
+  context_audit: checkContextAudit,
+  invalid_context_audit: checkInvalidContextAudit,
 };
 
 /**
  * Recalcule indépendamment chaque "check" fourni par l'étape 1 de
  * /exercises/generate (voir index.js) et le compare à la valeur annoncée
- * par le modèle. `ok: false` seulement si au moins un check d'un type
- * couvert diverge au-delà de la tolérance — un check "skipped" (type non
+ * par le modèle. `derivative_eval` contrôle la valeur de f'(x) à un point,
+ * pas la validité d'une expression dérivée donnée en toutes circonstances.
+ * `ok: false` seulement si au moins un check d'un type couvert diverge au-delà
+ * de la tolérance — un check "skipped" (type non
  * couvert, ou champs illisibles) ne fait jamais échouer la vérification :
  * ce garde-fou est une première ligne de défense ciblée sur des cas
  * simples et fréquents, pas un moteur de vérification symbolique général.
