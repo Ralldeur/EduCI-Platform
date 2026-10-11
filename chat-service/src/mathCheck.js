@@ -15,12 +15,15 @@ import { derivative, evaluate } from "mathjs";
 // un point (f(x) pour un x donné), et valeur d'une dérivée en un point
 // (f'(a), calculée symboliquement puis évaluée en a). Pour un contexte
 // concret avec une grandeur non négative, on vérifie aussi l'expression sur
-// trois valeurs consécutives au début du domaine annoncé.
+// trois valeurs consécutives au début du domaine annoncé. Pour une étude de
+// variations, on contrôle le signe de f' sur plusieurs points de chaque
+// intervalle fourni par l'étape de préparation.
 // NON COUVERT (volontairement, pour rester réalisable en une session) :
 // limites, intégrales, nombres complexes, statistiques/régression, preuves
-// par récurrence, équations à résoudre, dérivées symboliques complètes et
-// tout calcul à plusieurs variables. L'étape 1 n'est pas obligée de remplir
-// "checks" pour ces cas — voir verifyPrompt dans index.js.
+// par récurrence, équations à résoudre, certification du signe de la dérivée
+// sur un intervalle entier, et tout calcul à plusieurs variables. Les
+// contrôles hors de ce périmètre ne sont pas générés — voir verifyPrompt dans
+// index.js.
 
 // Tolérance : les valeurs annoncées dans un énoncé sont souvent arrondies
 // (à l'unité, au dixième...) par le modèle avant d'être écrites dans les
@@ -55,6 +58,13 @@ function toNumber(value) {
     return Number.isFinite(n) ? n : NaN;
   }
   return NaN;
+}
+
+// Le modèle utilise souvent la notation française `ln(x)`. mathjs nomme
+// le logarithme népérien `log(x)`, donc on traduit le nom de fonction avant
+// chaque calcul symbolique ou numérique.
+function normalizeMathExpression(expression) {
+  return expression.replace(/\bln(?=\s*\()/gi, "log");
 }
 
 function checkGeometric(check) {
@@ -95,7 +105,7 @@ function checkFunctionEval(check) {
   }
   let computed;
   try {
-    computed = evaluate(check.expr, { x });
+    computed = evaluate(normalizeMathExpression(check.expr), { x });
   } catch (err) {
     return { skipped: true, reason: `expression illisible par mathjs: ${err.message}` };
   }
@@ -119,7 +129,7 @@ function checkDerivativeEval(check) {
 
   let computed;
   try {
-    computed = derivative(check.expr, "x").evaluate({ x });
+    computed = derivative(normalizeMathExpression(check.expr), "x").evaluate({ x });
   } catch (err) {
     return { skipped: true, reason: `dérivée illisible par mathjs: ${err.message}` };
   }
@@ -127,6 +137,140 @@ function checkDerivativeEval(check) {
     return { skipped: true, reason: "dérivée non numérique en ce point" };
   }
   return { computed, claimed, ok: withinTolerance(computed, claimed) };
+}
+
+function checkDerivativeSigns(check) {
+  if (typeof check.expr !== "string" || !check.expr.trim()) {
+    return { skipped: true, reason: "expression manquante" };
+  }
+  if (!Array.isArray(check.intervals) || check.intervals.length === 0) {
+    return { ok: false, reason: "intervalles de variation manquants" };
+  }
+
+  let derivativeExpression;
+  try {
+    derivativeExpression = derivative(normalizeMathExpression(check.expr), "x");
+  } catch (err) {
+    return { skipped: true, reason: `dérivée illisible par mathjs: ${err.message}` };
+  }
+
+  const results = [];
+  let previousTo;
+  for (const [index, interval] of check.intervals.entries()) {
+    const from = interval?.from === null ? -Infinity : toNumber(interval?.from);
+    const to = interval?.to === null ? Infinity : toNumber(interval?.to);
+    const trend = interval?.trend;
+    if (
+      (!Number.isFinite(from) && from !== -Infinity) ||
+      (!Number.isFinite(to) && to !== Infinity) ||
+      from >= to ||
+      !["increasing", "decreasing"].includes(trend)
+    ) {
+      return { ok: false, reason: "intervalle ou sens de variation invalide" };
+    }
+    if (index > 0 && from !== previousTo) {
+      return { ok: false, reason: "les intervalles de variation ne se suivent pas" };
+    }
+    previousTo = to;
+
+    // Plusieurs points intérieurs limitent le risque qu'un point critique
+    // non annoncé passe entre les mailles. Pour les intervalles non bornés,
+    // on teste aussi des distances croissantes depuis la borne finie.
+    const offsets = [0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256];
+    const samples = Number.isFinite(from) && Number.isFinite(to)
+      ? Array.from({ length: 9 }, (_, index) => from + (to - from) * ((index + 1) / 10))
+      : from === -Infinity && to === Infinity
+        ? [-256, -64, -16, -4, -1, 0, 1, 4, 16, 64, 256]
+        : from === -Infinity
+          ? offsets.map((offset) => to - offset)
+          : offsets.map((offset) => from + offset);
+    const expectedSign = trend === "increasing" ? 1 : -1;
+    let expectedSignObserved = false;
+
+    for (const x of samples) {
+      let value;
+      try {
+        value = derivativeExpression.evaluate({ x });
+      } catch (err) {
+        return { ok: false, reason: `dérivée non calculable en x=${x}: ${err.message}` };
+      }
+      if (typeof value !== "number" || !Number.isFinite(value)) {
+        return { ok: false, reason: `dérivée non définie en x=${x}` };
+      }
+      const sign = Math.sign(value);
+      results.push({ x, derivative: value, trend });
+      if (sign !== 0 && sign !== expectedSign) {
+        return {
+          ok: false,
+          results,
+          reason: `le sens annoncé « ${trend} » contredit le signe de f'(${x})`,
+        };
+      }
+      if (sign === expectedSign) expectedSignObserved = true;
+    }
+    if (!expectedSignObserved) {
+      return {
+        ok: false,
+        results,
+        reason: `aucun signe de dérivée non nul ne confirme le sens annoncé « ${trend} »`,
+      };
+    }
+  }
+
+  return { ok: true, results };
+}
+
+function checkRationalDecomposition(check) {
+  const fields = ["numeratorExpr", "denominatorExpr", "quotientExpr", "remainderExpr"];
+  if (fields.some((field) => typeof check[field] !== "string" || !check[field].trim())) {
+    return { ok: false, reason: "décomposition rationnelle incomplète" };
+  }
+
+  // Vérifie N(x) = D(x)Q(x) + R(x) sur plusieurs valeurs. Ce n'est pas une
+  // preuve symbolique, mais cela détecte notamment les erreurs de reste
+  // comme 3x²−6x+2 = (x−1)(3x−3)+5.
+  const samples = [-7, -3, 0, 2, 5, 11];
+  let checked = 0;
+  for (const x of samples) {
+    try {
+      const numerator = evaluate(normalizeMathExpression(check.numeratorExpr), { x });
+      const denominator = evaluate(normalizeMathExpression(check.denominatorExpr), { x });
+      const quotient = evaluate(normalizeMathExpression(check.quotientExpr), { x });
+      const remainder = evaluate(normalizeMathExpression(check.remainderExpr), { x });
+      if ([numerator, denominator, quotient, remainder].some((value) => typeof value !== "number" || !Number.isFinite(value))) {
+        continue;
+      }
+      if (Math.abs(denominator) < 1e-12) continue;
+      const reconstructed = denominator * quotient + remainder;
+      const tolerance = 1e-9 * Math.max(1, Math.abs(numerator), Math.abs(reconstructed));
+      checked += 1;
+      if (Math.abs(numerator - reconstructed) > tolerance) {
+        return { ok: false, x, numerator, reconstructed, reason: `identité de décomposition fausse en x=${x}` };
+      }
+    } catch (err) {
+      return { ok: false, reason: `expression de décomposition illisible : ${err.message}` };
+    }
+  }
+  return checked >= 3
+    ? { ok: true, checkedSamples: checked }
+    : { ok: false, reason: "pas assez de valeurs calculables pour vérifier la décomposition" };
+}
+
+function checkDrawProbability(check) {
+  const red = toNumber(check.red);
+  const blue = toNumber(check.blue);
+  const totalClaimed = toNumber(check.totalOutcomes);
+  const favorableClaimed = toNumber(check.favorableOutcomes);
+  const probabilityClaimed = toNumber(check.claimedProbability);
+  if (![red, blue, totalClaimed, favorableClaimed, probabilityClaimed].every(Number.isFinite) || red < 0 || blue < 0 || red + blue < 2) {
+    return { ok: false, reason: "paramètres de tirage incomplets ou invalides" };
+  }
+  if (typeof check.ordered !== "boolean") return { ok: false, reason: "convention d'ordre du tirage manquante" };
+  const total = check.ordered ? (red + blue) * (red + blue - 1) : ((red + blue) * (red + blue - 1)) / 2;
+  const favorable = check.ordered ? 2 * red * blue : red * blue;
+  const probability = favorable / total;
+  const ok = totalClaimed === total && favorableClaimed === favorable && Math.abs(probabilityClaimed - probability) <= 1e-9;
+  return { ok, total, favorable, probability, reason: ok ? undefined : "les dénombrements ne respectent pas la convention de tirage annoncée" };
 }
 
 function checkNonnegativeSamples(check) {
@@ -137,11 +281,21 @@ function checkNonnegativeSamples(check) {
   if (!Number.isFinite(domainStart)) {
     return { ok: false, reason: "début du domaine non numérique" };
   }
+  const domainEnd = check.domainEnd == null ? null : toNumber(check.domainEnd);
+  if (check.domainEnd != null && (!Number.isFinite(domainEnd) || domainEnd < domainStart)) {
+    return { ok: false, reason: "fin du domaine invalide pour l'audit du contexte" };
+  }
 
   let samples;
   try {
-    samples = [domainStart, domainStart + 1, domainStart + 2].map((x) => {
-      const value = evaluate(check.expr, { x });
+    const samplePoints =
+      domainEnd == null
+        ? [domainStart, domainStart + 1, domainStart + 2]
+        : domainEnd === domainStart
+          ? [domainStart]
+          : [domainStart, (domainStart + domainEnd) / 2, domainEnd];
+    samples = samplePoints.map((x) => {
+      const value = evaluate(normalizeMathExpression(check.expr), { x });
       if (typeof value !== "number" || !Number.isFinite(value)) {
         throw new Error(`valeur non numérique pour x=${x}`);
       }
@@ -172,6 +326,9 @@ const CHECKERS = {
   arithmetic: checkArithmetic,
   function_eval: checkFunctionEval,
   derivative_eval: checkDerivativeEval,
+  derivative_signs: checkDerivativeSigns,
+  rational_decomposition: checkRationalDecomposition,
+  draw_probability: checkDrawProbability,
   nonnegative_samples: checkNonnegativeSamples,
   context_audit: checkContextAudit,
   invalid_context_audit: checkInvalidContextAudit,
@@ -179,9 +336,10 @@ const CHECKERS = {
 
 /**
  * Recalcule indépendamment chaque "check" fourni par l'étape 1 de
- * /exercises/generate (voir index.js) et le compare à la valeur annoncée
- * par le modèle. `derivative_eval` contrôle la valeur de f'(x) à un point,
- * pas la validité d'une expression dérivée donnée en toutes circonstances.
+ * /exercises/generate (voir index.js) et le compare aux valeurs annoncées
+ * par le modèle. `derivative_eval` contrôle f'(x) en un point ;
+ * `derivative_signs` vérifie le signe de f' sur des points échantillonnés
+ * dans chaque intervalle, sans certifier formellement tout l'intervalle.
  * `ok: false` seulement si au moins un check d'un type couvert diverge au-delà
  * de la tolérance — un check "skipped" (type non
  * couvert, ou champs illisibles) ne fait jamais échouer la vérification :
@@ -191,9 +349,24 @@ const CHECKERS = {
  * @param {Array} checks - le champ "checks" renvoyé par l'étape 1.
  * @returns {{ok: boolean, results: Array}}
  */
-export function verifyChecks(checks) {
+export function verifyChecks(
+  checks,
+  {
+    requireDerivativeSigns = false,
+    requiredDerivativeSignCount = 0,
+    requireRationalDecompositions = false,
+    requiredRationalDecompositionCount = 0,
+    requireDrawProbabilities = false,
+    requiredDrawProbabilityCount = 0,
+  } = {}
+) {
   if (!Array.isArray(checks) || checks.length === 0) {
-    return { ok: true, results: [] };
+    return {
+      ok: (!requireDerivativeSigns || requiredDerivativeSignCount === 0) &&
+        (!requireRationalDecompositions || requiredRationalDecompositionCount === 0) &&
+        (!requireDrawProbabilities || requiredDrawProbabilityCount === 0),
+      results: [],
+    };
   }
 
   const results = checks.map((check) => {
@@ -208,6 +381,16 @@ export function verifyChecks(checks) {
     }
   });
 
-  const ok = results.every((r) => r.skipped || r.ok !== false);
+  const ok =
+    results.every((r) => r.skipped || r.ok !== false) &&
+    (!requireDerivativeSigns ||
+      results.filter((r) => r.type === "derivative_signs" && !r.skipped && r.ok === true).length >=
+        requiredDerivativeSignCount) &&
+    (!requireRationalDecompositions ||
+      results.filter((r) => r.type === "rational_decomposition" && !r.skipped && r.ok === true).length >=
+        requiredRationalDecompositionCount) &&
+    (!requireDrawProbabilities ||
+      results.filter((r) => r.type === "draw_probability" && !r.skipped && r.ok === true).length >=
+        requiredDrawProbabilityCount);
   return { ok, results };
 }

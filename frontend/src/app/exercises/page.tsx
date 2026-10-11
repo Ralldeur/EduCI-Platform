@@ -112,7 +112,8 @@ export default function ExercisesPage() {
         const data = await res.json();
         setExercises(data.exercises ?? []);
       } else {
-        toast.error("Erreur de génération");
+        const data = await res.json().catch(() => ({}));
+        toast.error(data.error ?? "Erreur de génération");
       }
     } catch {
       toast.error("Erreur de communication");

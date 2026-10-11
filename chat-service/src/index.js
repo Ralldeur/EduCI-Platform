@@ -7,6 +7,7 @@ import { buildSystemPrompt, docTypeForMode } from "./promptBuilder.js";
 import { streamAIResponse, generateJSON } from "./groqClient.js";
 import { buildCurriculumContext, getCycle, IVORIAN_EXAMS } from "./curriculum.js";
 import { verifyChecks } from "./mathCheck.js";
+import { formatRationalDecomposition, normalizeCorrection, normalizeExercises } from "./exerciseText.js";
 
 const app = express();
 const PORT = process.env.PORT || 8082;
@@ -414,6 +415,25 @@ const EXERCISE_TYPE_INSTRUCTIONS = {
   FILL_BLANK: "Phrases à compléter avec les mots manquants.",
 };
 
+const VISIBLE_SELF_CORRECTION_MARKERS = [
+  /\(\s*(?:correction|rectification)\s*[:：]/iu,
+  /\battente\s*[,!:…]/iu,
+  /\bcorrection du calcul\b/iu,
+  /\bnon[,!:…]\s*(?:recalculons|reprenons|recommençons|il faut corriger)\b/iu,
+  /\bselon (?:le|les) instructions\b/iu,
+  /\bje me suis (?:trompé|contredit)\b/iu,
+  /\bje dois me corriger\b/iu,
+  /\b(?:reprenons|recommençons) depuis le début\b/iu,
+];
+
+function hasVisibleSelfCorrection(exercises) {
+  return exercises.some((exercise) =>
+    [exercise.question, exercise.answer, exercise.explanation]
+      .filter((text) => typeof text === "string")
+      .some((text) => VISIBLE_SELF_CORRECTION_MARKERS.some((marker) => marker.test(text)))
+  );
+}
+
 app.post("/exercises/generate", async (req, res) => {
   const { userId } = identity(req);
   if (!userId) return res.status(401).json({ error: "Non authentifié" });
@@ -443,6 +463,12 @@ app.post("/exercises/generate", async (req, res) => {
   const typeInstruction = EXERCISE_TYPE_INSTRUCTIONS[type ?? "OPEN"] ?? EXERCISE_TYPE_INSTRUCTIONS.OPEN;
   const requestedCount = Number(count);
   const exerciseCount = Number.isInteger(requestedCount) && requestedCount > 0 ? requestedCount : 3;
+  const normalizedTopic = String(topic ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  const requiresVariationAudit = /variations?|etudes?.{0,40}fonctions?/i.test(normalizedTopic);
+  const requiresRationalDecompositionAudit = /asymptotes?|fonctions? rationnelles?|decomposition rationnelle/i.test(normalizedTopic);
+  const requiresDrawProbabilityAudit = /tirages?.*(?:sans remise|successifs?)|sans remise/i.test(normalizedTopic);
 
   const sharedContext = `Génère ${exerciseCount} exercices de ${subject} pour un élève de ${gradeLevel} en Côte d'Ivoire.
 ${topic ? `Sujet spécifique : ${topic}` : ""}
@@ -484,8 +510,11 @@ Tâche : NE RÉDIGE AUCUN énoncé. Pour chacun des ${exerciseCount} exercices �
 3. Calcule explicitement chacune de ces valeurs à partir des paramètres choisis (ex. remplace x par chaque valeur dans l'expression de f(x) et effectue le calcul complet jusqu'au résultat final).
 4. Compare chaque résultat obtenu à l'étape 3 à ce que tu comptes annoncer dans l'énoncé. S'il y a le moindre écart, corrige les paramètres et RECOMMENCE le calcul depuis l'étape 3 — ne passe à l'exercice suivant qu'une fois chaque valeur confirmée exacte.
 5. Privilégie des résultats exacts et simples (entier ou fraction simple) adaptés au niveau ${gradeLevel}.
-6. Choisis un contexte seulement s'il respecte le domaine et le sens des valeurs. Une récolte, une distance, un âge, une masse ou un effectif ne peut pas être négatif. Pour une grandeur forcément non négative définie à partir d'un instant de départ, vérifie aussi l'expression au départ et aux deux premiers pas après le départ. Si une valeur est impossible, change le contexte ou garde un exercice abstrait ; ne change pas une formule imposée par le sujet.
+6. Choisis un contexte seulement s'il respecte le domaine et le sens des valeurs. Une récolte, une distance, un âge, une masse ou un effectif ne peut pas être négatif. Pour une grandeur forcément non négative définie à partir d'un instant de départ, vérifie aussi l'expression au départ et aux deux premiers pas après le départ. Pour une variable physique à domaine borné (par ex. l'avancement x d'une réaction, avec 0 ≤ x ≤ xmax), donne les bornes réelles et vérifie seulement dans cet intervalle. Si une valeur est impossible, change le contexte ou garde un exercice abstrait ; ne change pas une formule imposée par le sujet.
 7. Exception pédagogique : si le sujet demande explicitement à l'élève de tester la validité ou la cohérence d'un modèle concret, conserve le contexte comme contre-exemple et fais de l'impossibilité la question à résoudre. Ne présente jamais le modèle impossible comme valide. Dans ce cas, utilise le mode "challenge".
+${requiresVariationAudit ? `8. Le sujet demande une étude de fonction/variations : pour chaque exercice concerné, ajoute un check "derivative_signs" avec l'expression de f et tous les intervalles de monotonie séparés par les points critiques et les valeurs interdites. Utilise from:null pour -∞, to:null pour +∞, et trend:"increasing" ou "decreasing". Exemple : {"type":"derivative_signs","expr":"(x^2+2*x+1)/(x-1)","intervals":[{"from":null,"to":-1,"trend":"increasing"},{"from":-1,"to":1,"trend":"decreasing"},{"from":1,"to":3,"trend":"decreasing"},{"from":3,"to":null,"trend":"increasing"}]}. Le serveur recalculera le signe de f' en plusieurs points de chaque intervalle. Ne fournis pas ce check si tu n'as pas déterminé les intervalles correctement.` : ""}
+${requiresRationalDecompositionAudit ? `9. Pour chaque fonction rationnelle, vérifie aussi la division euclidienne avec un check "rational_decomposition" : {"type":"rational_decomposition","numeratorExpr":"3*x^2-6*x+2","denominatorExpr":"x-1","quotientExpr":"3*x-3","remainderExpr":"-1"}. Le serveur contrôle l'identité N(x)=D(x)Q(x)+R(x) sur plusieurs valeurs. Reprends exactement le quotient et le reste validés dans la correction et déduis-en la position par rapport à l'asymptote.` : ""}
+${requiresDrawProbabilityAudit ? `10. Pour les tirages sans remise, choisis explicitement la convention ordonnée : l'énoncé doit dire que les objets sont tirés successivement, et le dénombrement compte des séquences ordonnées. Fournis un check "draw_probability" avec red, blue, ordered:true, totalOutcomes, favorableOutcomes et claimedProbability. Pour deux objets de couleurs différentes, favorableOutcomes=2*red*blue et totalOutcomes=(red+blue)*(red+blue-1).` : ""}
 
 Ce raisonnement (étapes 1 à 4) doit rester interne — n'expose jamais le détail des calculs dans le JSON final, seulement les résultats.
 
@@ -499,7 +528,8 @@ Réponds UNIQUEMENT avec ce JSON compact (pas d'énoncé rédigé, pas d'explica
       "contextAudit": {
         "mode": "nonnegative",
         "expression": "expression de f(x), vide si exercice abstrait ou sans fonction",
-        "domainStart": 0
+        "domainStart": 0,
+        "domainEnd": 10
       }
     }
   ],
@@ -507,17 +537,21 @@ Réponds UNIQUEMENT avec ce JSON compact (pas d'énoncé rédigé, pas d'explica
     { "type": "geometric", "u0": 100000, "q": 1.02, "n": 10, "claimed": 121899.44 },
     { "type": "arithmetic", "u0": 5, "r": 3, "n": 12, "claimed": 41 },
     { "type": "function_eval", "expr": "(x^2+2)/(x-1)", "x": 2, "claimed": 6 },
-    { "type": "derivative_eval", "expr": "x^3-2*x", "x": 2, "claimed": 10 }
+    { "type": "derivative_eval", "expr": "x^3-2*x", "x": 2, "claimed": 10 },
+    { "type": "derivative_signs", "expr": "(x^2+2*x+1)/(x-1)", "intervals": [{ "from": null, "to": -1, "trend": "increasing" }, { "from": -1, "to": 1, "trend": "decreasing" }, { "from": 1, "to": 3, "trend": "decreasing" }, { "from": 3, "to": null, "trend": "increasing" }] }
   ]
 }
 Le champ "verification" doit contenir CHAQUE valeur calculée à l'étape 3, avec exactement la même valeur que celle qui apparaîtra dans l'énoncé final — ces valeurs serviront de référence pour l'étape de rédaction.
-Chaque plan doit aussi fournir "contextAudit" : mode "nonnegative" pour une grandeur réelle nécessairement non négative, "signed" pour une grandeur réelle pouvant être négative, "abstract" si l'exercice ne prétend pas modéliser une situation concrète, ou "challenge" uniquement si l'élève doit explicitement détecter qu'un modèle concret est impossible ou incohérent. Avec "challenge", inscris cette détection comme objectif central dans "idea" et fais apparaître la question dans l'énoncé. Ne choisis pas "challenge" pour excuser une incohérence accidentelle. En mode "nonnegative", donne l'expression mathématique de la quantité et la valeur numérique du début réel de son domaine (par exemple 0 pour un temps écoulé). Le serveur vérifiera cette expression au début du domaine et aux deux valeurs suivantes.
-Le champ "checks" est recalculé indépendamment côté serveur pour repérer une erreur d'arithmétique. Pour CHAQUE valeur calculée qui correspond à l'un des 4 cas ci-dessous, ajoute obligatoirement un check numérique. Il ne peut être vide que si aucun calcul prévu ne correspond à ces cas. Utilise des nombres, pas du texte ni une fraction littérale :
+Chaque plan doit aussi fournir "contextAudit" : mode "nonnegative" pour une grandeur réelle nécessairement non négative, "signed" pour une grandeur réelle pouvant être négative, "abstract" si l'exercice ne prétend pas modéliser une situation concrète, ou "challenge" uniquement si l'élève doit explicitement détecter qu'un modèle concret est impossible ou incohérent. Avec "challenge", inscris cette détection comme objectif central dans "idea" et fais apparaître la question dans l'énoncé. Ne choisis pas "challenge" pour excuser une incohérence accidentelle. En mode "nonnegative", donne l'expression mathématique dans la syntaxe de mathjs, avec la seule variable "x", sans unités ni égalité (ex. "0.1-x"), et la valeur numérique du début réel de son domaine. Pour un domaine borné, donne aussi "domainEnd" avec sa borne physique maximale : le serveur vérifiera le début, le milieu et la fin de l'intervalle valide. Exemple pour un avancement de réaction : une quantité restante de 0.1−x mol, avec 0≤x≤0.075, s'écrit {"mode":"nonnegative","expression":"0.1-x","domainStart":0,"domainEnd":0.075}. N'écris pas ξ, xi, n0, une unité, ou un nom de quantité dans "expression". Sinon, le serveur vérifiera le début du domaine et les deux valeurs suivantes.
+Le champ "checks" est recalculé indépendamment côté serveur pour repérer des erreurs de calcul. Pour CHAQUE valeur calculée qui correspond à l'un des cas ci-dessous, ajoute obligatoirement un check. Il ne peut être vide que si aucun calcul prévu ne correspond à ces cas. Utilise des nombres, pas du texte ni une fraction littérale :
 - suite géométrique : u_n = u0 × q^n → {"type":"geometric","u0":...,"q":...,"n":...,"claimed":...}
 - suite arithmétique : u_n = u0 + n×r → {"type":"arithmetic","u0":...,"r":...,"n":...,"claimed":...}
 - image f(x) d'une fonction polynomiale/rationnelle à une variable en un point → {"type":"function_eval","expr":"expression avec x, ex (x^2+2)/(x-1)","x":...,"claimed":...}
 - valeur de la dérivée f'(a) d'une fonction à une variable en un point → {"type":"derivative_eval","expr":"expression de f(x)","x":...,"claimed":...}. Le serveur recalcule f'(x) symboliquement puis l'évalue au point indiqué ; ce contrôle valide cette valeur ponctuelle, pas à lui seul toute une étude de fonction.
-N'ajoute RIEN dans "checks" pour un autre type de calcul (limite, intégrale, nombre complexe, statistiques, preuve, équation à résoudre...) — laisse le tableau vide plutôt que de forcer un cas qui ne correspond pas exactement.`;
+- signes de la dérivée dans une étude de variations → {"type":"derivative_signs","expr":"expression de f(x)","intervals":[{"from":...,"to":...,"trend":"increasing"}]}. Utilise null pour une borne infinie et décris tous les intervalles séparés par les points critiques et les valeurs interdites. Le serveur recalcule f' en plusieurs points intérieurs de chaque intervalle.
+${requiresRationalDecompositionAudit ? `- division euclidienne d'une fonction rationnelle → {"type":"rational_decomposition","numeratorExpr":"3*x^2-6*x+2","denominatorExpr":"x-1","quotientExpr":"3*x-3","remainderExpr":"-1"}.
+` : ""}${requiresDrawProbabilityAudit ? `- tirage sans remise de deux objets de deux couleurs → {"type":"draw_probability","red":5,"blue":3,"ordered":true,"totalOutcomes":56,"favorableOutcomes":30,"claimedProbability":0.5357142857142857}. Le champ ordered doit correspondre au vocabulaire de l'énoncé.
+` : ""}N'ajoute RIEN dans "checks" pour un autre type de calcul (limite, intégrale, nombre complexe, statistiques, preuve, équation à résoudre...) — laisse le tableau vide plutôt que de forcer un cas qui ne correspond pas exactement.`;
 
   // Un seul appel à l'étape 1, qui renvoie plans + checks déjà parsés (best
   // effort : un JSON illisible donne des tableaux vides plutôt qu'une
@@ -546,6 +580,7 @@ N'ajoute RIEN dans "checks" pour un autre type de calcul (limite, intégrale, no
             type: "nonnegative_samples",
             expr: audit.expression,
             domainStart: audit.domainStart,
+            domainEnd: audit.domainEnd,
             planIndex,
           };
         }
@@ -568,6 +603,17 @@ N'ajoute RIEN dans "checks" pour un autre type de calcul (limite, intégrale, no
     return sendGroqError(res, err, "vérification paramètres exercices");
   }
 
+  const validateMathChecks = (candidateChecks) => {
+    return verifyChecks(candidateChecks, {
+      requireDerivativeSigns: requiresVariationAudit,
+      requiredDerivativeSignCount: requiresVariationAudit ? 1 : 0,
+      requireRationalDecompositions: requiresRationalDecompositionAudit,
+      requiredRationalDecompositionCount: requiresRationalDecompositionAudit ? 1 : 0,
+      requireDrawProbabilities: requiresDrawProbabilityAudit,
+      requiredDrawProbabilityCount: requiresDrawProbabilityAudit ? 1 : 0,
+    });
+  };
+
   // Garde-fou de recalcul programmatique (voir mathCheck.js) : l'étape 1
   // ci-dessus ne fait que "penser" avoir vérifié ses propres valeurs — rien
   // ne garantissait jusqu'ici qu'elle ait vraiment recalculé juste (voir
@@ -580,7 +626,7 @@ N'ajoute RIEN dans "checks" pour un autre type de calcul (limite, intégrale, no
   // que de laisser passer une valeur fausse jusqu'à l'élève. Une seule
   // relance (pas de boucle) : si l'écart persiste, on bloque la réponse
   // plutôt que de présenter un résultat incohérent à l'élève.
-  let verification = verifyChecks(checks);
+  let verification = validateMathChecks(checks);
   // Diagnostic (même logique que le log "budget Groq" existant) : combien
   // de checks l'étape 1 a-t-elle rempli, et combien sont couverts par le
   // garde-fou (ni vide ni "skipped") — utile pour juger si l'étape 1
@@ -597,7 +643,7 @@ N'ajoute RIEN dans "checks" pour un autre type de calcul (limite, intégrale, no
     );
     try {
       const retry = await runVerificationStep();
-      const retryVerification = verifyChecks(retry.checks);
+      const retryVerification = validateMathChecks(retry.checks);
       if (retryVerification.ok && retry.plans.length > 0) {
         console.log("[chat-service] garde-fou de calcul : relance propre, valeurs corrigées utilisées");
         plans = retry.plans;
@@ -650,7 +696,7 @@ N'ajoute RIEN dans "checks" pour un autre type de calcul (limite, intégrale, no
             const context = p.contextAudit
               ? ` [cadre : ${p.contextAudit.mode}${
                   p.contextAudit.mode === "nonnegative"
-                    ? `, expression=${p.contextAudit.expression}, domaine à partir de x=${p.contextAudit.domainStart}`
+                    ? `, expression=${p.contextAudit.expression}, domaine à partir de x=${p.contextAudit.domainStart}${p.contextAudit.domainEnd == null ? "" : ` jusqu'à x=${p.contextAudit.domainEnd}`}`
                     : ""
                 }]`
               : "";
@@ -659,9 +705,35 @@ N'ajoute RIEN dans "checks" pour un autre type de calcul (limite, intégrale, no
           .join("\n")}`
       : "";
 
-  const draftPrompt = `${sharedContext}${plansBlock}
+  const variationChecksBlock = checks
+    .filter((check) => check?.type === "derivative_signs" && Array.isArray(check.intervals))
+    .map((check) => {
+      const intervals = check.intervals
+        .map(({ from, to, trend }) => {
+          const left = from === null ? "-∞" : from;
+          const right = to === null ? "+∞" : to;
+          return `[${left}, ${right}] : ${trend === "increasing" ? "croissante (flèche ↗)" : "décroissante (flèche ↘)"}`;
+        })
+        .join(" ; ");
+      return `Variations vérifiées pour f(x)=${check.expr} : ${intervals}. Reprends ces sens dans la correction finale.`;
+    })
+    .join("\n");
+  const rationalChecksBlock = checks
+    .filter((check) => check?.type === "rational_decomposition")
+    .map(formatRationalDecomposition)
+    .join("\n");
+  const drawChecksBlock = checks
+    .filter((check) => check?.type === "draw_probability")
+    .map((check) => `Tirage vérifié (ordonné) : ${check.totalOutcomes} issues, ${check.favorableOutcomes} favorables, probabilité ${check.claimedProbability}. Garde le même dénombrement et le vocabulaire « successivement ».`)
+    .join("\n");
 
-Rédige maintenant les ${exerciseCount} exercices complets (énoncé + réponse + explication). Les énoncés, réponses et explications doivent être cohérents entre eux et avec les calculs. Vérifie que chaque réponse découle de l'énoncé et que les étapes de la correction aboutissent au résultat annoncé. Respecte aussi le cadre indiqué pour chaque exercice : une grandeur réelle non négative ne doit jamais prendre une valeur négative sur le domaine annoncé. Si une situation concrète ne convient pas à la fonction, présente l'exercice de façon abstraite plutôt que de donner une interprétation fausse. Exception : si le cadre est "challenge", l'énoncé doit demander explicitement si le modèle est cohérent et la correction doit démontrer pourquoi il est impossible ; ne présente jamais les valeurs impossibles comme réalistes.
+  const draftPrompt = `${sharedContext}${plansBlock}
+${variationChecksBlock ? `\n\nRéférences de variations recalculées par le serveur :\n${variationChecksBlock}` : ""}
+${rationalChecksBlock ? `\n\nRéférences de décomposition recalculées par le serveur :\n${rationalChecksBlock}` : ""}
+${drawChecksBlock ? `\n\nRéférences de tirage recalculées par le serveur :\n${drawChecksBlock}` : ""}
+
+Rédige maintenant les ${exerciseCount} exercices complets (énoncé + réponse + explication). Les énoncés, réponses et explications doivent être cohérents entre eux et avec les calculs. Vérifie que chaque réponse découle de l'énoncé et que les étapes de la correction aboutissent au résultat annoncé. Pour les limites, ne qualifie pas de forme indéterminée un produit dont les signes déterminent la limite, par exemple (−∞)×(+∞)=−∞. Relis chaque énoncé pour supprimer les répétitions accidentelles de mots (par exemple « variable aléatoire aléatoire »), les formulations maladroites et les coquilles. Les explications sont destinées à l'élève : donne une solution pédagogique claire et finalisée, sans brouillon, hésitation, tentative abandonnée, commentaire sur tes instructions ou autocorrection. Respecte aussi le cadre indiqué pour chaque exercice : une grandeur réelle non négative ne doit jamais prendre une valeur négative sur le domaine annoncé. Si une situation concrète ne convient pas à la fonction, présente l'exercice de façon abstraite plutôt que de donner une interprétation fausse. Exception : si le cadre est "challenge", l'énoncé doit demander explicitement si le modèle est cohérent et la correction doit démontrer pourquoi il est impossible ; ne présente jamais les valeurs impossibles comme réalistes. Pour toute fraction issue d'un reste négatif, simplifie le signe : écris Q(x)−|R|/D(x), jamais Q(x)+(-|R|)/D(x). Applique cette simplification dans l'énoncé, la réponse et chaque étape d'explication.
+${requiresVariationAudit ? `Pour tout exercice qui demande un tableau de variations, le champ "answer" DOIT contenir le tableau complet sous forme de tableau Markdown (avec une ligne d'en-tête et des séparateurs |), pas seulement une description en prose. Le tableau indique les bornes du domaine, les points critiques, le signe de f'(x) sur chaque intervalle, le sens de variation de f et les valeurs de f aux points critiques. Écris les formules dans les cellules avec $...$ pour qu'elles soient rendues par KaTeX. Reprends exactement les sens de variation validés dans les références du serveur : une fonction croissante se représente par une flèche ↗, une fonction décroissante par une flèche ↘. Vérifie dans le tableau que chaque flèche correspond au signe de f'(x) et au sens écrit en prose ; ne les inverse pas. Par exemple, si les variations vérifiées sont croissante puis décroissante, la ligne de f doit monter vers le maximum puis redescendre. La prose peut compléter le tableau dans "explanation", mais ne le remplace pas.` : ""}
 
 Si tu repères une contradiction ou si tu ne peux pas vérifier un résultat, ne l'invente pas et ne la masque pas : réponds uniquement avec {"error":"calcul incohérent"}. L'API indiquera que la génération a échoué et demandera une nouvelle tentative. Pour les calculs qui ne sont pas couverts par les vérifications numériques, sois prudent et n'affirme pas un résultat dont tu n'es pas sûr.
 Réponds en JSON avec le format suivant :
@@ -677,25 +749,45 @@ Réponds en JSON avec le format suivant :
 }
 (le champ "options" n'est nécessaire que pour le type QCM ; omets-le sinon)`;
 
+  const systemPrompt =
+    "Tu es un générateur d'exercices pour le programme scolaire ivoirien. Réponds uniquement en JSON valide. Formules LaTeX : entoure TOUJOURS une formule mathématique de $ (inline) ou $$ (bloc) — jamais de parenthèses/crochets seuls comme \"( n \\in \\mathbb{N}^* )\" — sinon elle s'affiche en texte brut au lieu d'un symbole mathématique côté élève.";
   let raw;
+  let result;
   try {
-    raw = await generateJSON(
-      [
-        {
-          role: "system",
-          content:
-            "Tu es un générateur d'exercices pour le programme scolaire ivoirien. Réponds uniquement en JSON valide. Formules LaTeX : entoure TOUJOURS une formule mathématique de $ (inline) ou $$ (bloc) — jamais de parenthèses/crochets seuls comme \"( n \\in \\mathbb{N}^* )\" — sinon elle s'affiche en texte brut au lieu d'un symbole mathématique côté élève.",
-        },
-        { role: "user", content: draftPrompt },
-      ],
-      { maxTokens: 6000, reasoningEffort: "none" }
-    );
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      raw = await generateJSON(
+        [
+          { role: "system", content: systemPrompt },
+          {
+            role: "user",
+            content:
+              draftPrompt +
+              (attempt === 0
+                ? ""
+                : "\n\nRéécris tous les exercices en réponses finales propres. Supprime tout brouillon, hésitation, autocorrection et toute correction ou rectification entre parenthèses dans les énoncés. Relis chaque réponse pour éviter les contradictions entre le résultat annoncé et les étapes."),
+          },
+        ],
+        { maxTokens: 6000, reasoningEffort: "none" }
+      );
+      result = JSON.parse(raw);
+      result.exercises = normalizeExercises(result?.exercises);
+      if (!Array.isArray(result?.exercises) || !hasVisibleSelfCorrection(result.exercises)) break;
+      if (attempt === 1) {
+        console.warn("[chat-service] autocorrection visible après une nouvelle génération pour exercises/generate");
+        return res.status(502).json({
+          error: "Je n'ai pas réussi à produire un corrigé clair. Réessaie avec un autre sujet.",
+        });
+      }
+    }
   } catch (err) {
+    if (err instanceof SyntaxError) {
+      console.error("[chat-service] réponse IA non-JSON pour exercises/generate:", raw);
+      return res.status(502).json({ error: "Réponse invalide de l'IA" });
+    }
     return sendGroqError(res, err, "génération exercices");
   }
 
   try {
-    const result = JSON.parse(raw);
     if (result?.error) {
       return res.status(502).json({
         error: "Je n'ai pas pu produire des exercices dont les calculs sont cohérents. Réessaie avec un autre sujet ou une autre demande.",
@@ -718,7 +810,7 @@ Réponds en JSON avec le format suivant :
       console.error("[chat-service] réponse IA incomplète ou invalide pour exercises/generate");
       return res.status(502).json({ error: "La génération des exercices a échoué. Réessaie dans un instant." });
     }
-    res.json(result);
+    res.json({ ...result, exercises: normalizeExercises(result.exercises) });
   } catch (err) {
     console.error("[chat-service] réponse IA non-JSON pour exercises/generate:", raw);
     res.status(502).json({ error: "Réponse invalide de l'IA" });
@@ -858,7 +950,7 @@ Réponds en JSON avec le format :
 
   try {
     const correction = JSON.parse(raw);
-    res.json(correction);
+    res.json(normalizeCorrection(correction));
   } catch (err) {
     console.error("[chat-service] réponse IA non-JSON pour exercises/correct:", raw);
     res.status(502).json({ error: "Réponse invalide de l'IA" });
