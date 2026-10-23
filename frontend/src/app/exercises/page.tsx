@@ -312,7 +312,18 @@ export default function ExercisesPage() {
                         }))
                       }
                     />
-                    {opt}
+                    <div className="prose-chat min-w-0 flex-1 text-sm [&>p]:mb-0">
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm, remarkMath]}
+                        rehypePlugins={[
+                          rehypeRaw,
+                          [rehypeSanitize, mdSanitizeSchema],
+                          rehypeKatex,
+                        ]}
+                      >
+                        {normalizeMathContent(opt)}
+                      </ReactMarkdown>
+                    </div>
                   </label>
                 ))}
               </div>
