@@ -337,19 +337,16 @@ app.post("/chat", async (req, res) => {
     { role: "user", content: userContent },
   ];
 
-  // Mode QUIZ : depuis que docTypeForMode interroge "cours" (voir
-  // promptBuilder.js), le system prompt inclut plusieurs extraits de cours
-  // denses (plus longs qu'un simple chunk "exercice"), ce qui laisse moins
-  // de budget TPM disponible pour la génération — un quiz complet (3
-  // questions QCM + explications détaillées) peut alors se faire couper en
-  // plein milieu (finish_reason "length", observé le 2026-09-03). Même
-  // solution que pour /exercises/generate et /exercises/correct (voir plus
-  // bas) : demander délibérément un maxTokens surdimensionné, que
-  // computeMaxTokens() (groqClient.js) ramène de toute façon à tout ce qui
-  // reste du budget TPM une fois le prompt déduit — ça ne coûte rien tant
-  // que le budget réel est plus large que l'ancien plafond fixe de 6000, et
-  // ça laisse le maximum de marge possible quand ce n'est pas le cas.
-  const streamOptions = conversation.mode === "QUIZ" ? { maxTokens: 16000 } : undefined;
+  // Les modes QUIZ et EXERCISE produisent souvent des réponses longues et
+  // structurées. Avec le plafond par défaut de 6000, le raisonnement caché
+  // peut en consommer une grande partie et couper le corrigé visible
+  // (finish_reason "length", observé pendant les tests du mode EXERCISE).
+  // Comme pour /exercises/generate et /exercises/correct, on demande un
+  // plafond haut ; computeMaxTokens() le ramène au budget TPM réellement
+  // disponible et au maximum accepté par le modèle.
+  const streamOptions = ["QUIZ", "EXERCISE"].includes(conversation.mode)
+    ? { maxTokens: 16000 }
+    : undefined;
 
   let stream;
   try {
@@ -469,6 +466,7 @@ app.post("/exercises/generate", async (req, res) => {
   const requiresVariationAudit = /variations?|etudes?.{0,40}fonctions?/i.test(normalizedTopic);
   const requiresRationalDecompositionAudit = /asymptotes?|fonctions? rationnelles?|decomposition rationnelle/i.test(normalizedTopic);
   const requiresDrawProbabilityAudit = /tirages?.*(?:sans remise|successifs?)|sans remise/i.test(normalizedTopic);
+  const requiresBinomialAudit = /loi\s+binomiale|binomiale/i.test(normalizedTopic);
 
   const sharedContext = `Génère ${exerciseCount} exercices de ${subject} pour un élève de ${gradeLevel} en Côte d'Ivoire.
 ${topic ? `Sujet spécifique : ${topic}` : ""}
@@ -515,6 +513,7 @@ Tâche : NE RÉDIGE AUCUN énoncé. Pour chacun des ${exerciseCount} exercices �
 ${requiresVariationAudit ? `8. Le sujet demande une étude de fonction/variations : pour chaque exercice concerné, ajoute un check "derivative_signs" avec l'expression de f et tous les intervalles de monotonie séparés par les points critiques et les valeurs interdites. Utilise from:null pour -∞, to:null pour +∞, et trend:"increasing" ou "decreasing". Exemple : {"type":"derivative_signs","expr":"(x^2+2*x+1)/(x-1)","intervals":[{"from":null,"to":-1,"trend":"increasing"},{"from":-1,"to":1,"trend":"decreasing"},{"from":1,"to":3,"trend":"decreasing"},{"from":3,"to":null,"trend":"increasing"}]}. Le serveur recalculera le signe de f' en plusieurs points de chaque intervalle. Ne fournis pas ce check si tu n'as pas déterminé les intervalles correctement.` : ""}
 ${requiresRationalDecompositionAudit ? `9. Pour chaque fonction rationnelle, vérifie aussi la division euclidienne avec un check "rational_decomposition" : {"type":"rational_decomposition","numeratorExpr":"3*x^2-6*x+2","denominatorExpr":"x-1","quotientExpr":"3*x-3","remainderExpr":"-1"}. Le serveur contrôle l'identité N(x)=D(x)Q(x)+R(x) sur plusieurs valeurs. Reprends exactement le quotient et le reste validés dans la correction et déduis-en la position par rapport à l'asymptote.` : ""}
 ${requiresDrawProbabilityAudit ? `10. Pour les tirages sans remise, choisis explicitement la convention ordonnée : l'énoncé doit dire que les objets sont tirés successivement, et le dénombrement compte des séquences ordonnées. Fournis un check "draw_probability" avec red, blue, ordered:true, totalOutcomes, favorableOutcomes et claimedProbability. Pour deux objets de couleurs différentes, favorableOutcomes=2*red*blue et totalOutcomes=(red+blue)*(red+blue-1).` : ""}
+${requiresBinomialAudit ? `11. Le sujet demande une loi binomiale : pour CHAQUE exercice, fournis un check "binomial_distribution" avec son planIndex (de 0 à ${exerciseCount - 1}), n, p, precision et toutes les probabilités P(X=k) de k=0 à n dans "probabilities" sous la forme [{"k":0,"claimed":0.02825}, ...]. Utilise precision:5 si les valeurs sont affichées à 5 décimales. Le serveur recalculera chaque valeur et la somme du tableau ; reprends uniquement les valeurs recalculées dans l'exercice.` : ""}
 
 Ce raisonnement (étapes 1 à 4) doit rester interne — n'expose jamais le détail des calculs dans le JSON final, seulement les résultats.
 
@@ -551,6 +550,7 @@ Le champ "checks" est recalculé indépendamment côté serveur pour repérer de
 - signes de la dérivée dans une étude de variations → {"type":"derivative_signs","expr":"expression de f(x)","intervals":[{"from":...,"to":...,"trend":"increasing"}]}. Utilise null pour une borne infinie et décris tous les intervalles séparés par les points critiques et les valeurs interdites. Le serveur recalcule f' en plusieurs points intérieurs de chaque intervalle.
 ${requiresRationalDecompositionAudit ? `- division euclidienne d'une fonction rationnelle → {"type":"rational_decomposition","numeratorExpr":"3*x^2-6*x+2","denominatorExpr":"x-1","quotientExpr":"3*x-3","remainderExpr":"-1"}.
 ` : ""}${requiresDrawProbabilityAudit ? `- tirage sans remise de deux objets de deux couleurs → {"type":"draw_probability","red":5,"blue":3,"ordered":true,"totalOutcomes":56,"favorableOutcomes":30,"claimedProbability":0.5357142857142857}. Le champ ordered doit correspondre au vocabulaire de l'énoncé.
+` : ""}${requiresBinomialAudit ? `- loi binomiale complète → {"type":"binomial_distribution","planIndex":0,"n":10,"p":0.3,"precision":5,"probabilities":[{"k":0,"claimed":0.02825},{"k":1,"claimed":0.12106}]}. Inclus toutes les valeurs k=0,...,n pour chaque exercice binomial.
 ` : ""}N'ajoute RIEN dans "checks" pour un autre type de calcul (limite, intégrale, nombre complexe, statistiques, preuve, équation à résoudre...) — laisse le tableau vide plutôt que de forcer un cas qui ne correspond pas exactement.`;
 
   // Un seul appel à l'étape 1, qui renvoie plans + checks déjà parsés (best
@@ -604,14 +604,40 @@ ${requiresRationalDecompositionAudit ? `- division euclidienne d'une fonction ra
   }
 
   const validateMathChecks = (candidateChecks) => {
-    return verifyChecks(candidateChecks, {
+    const verificationResult = verifyChecks(candidateChecks, {
       requireDerivativeSigns: requiresVariationAudit,
       requiredDerivativeSignCount: requiresVariationAudit ? 1 : 0,
       requireRationalDecompositions: requiresRationalDecompositionAudit,
       requiredRationalDecompositionCount: requiresRationalDecompositionAudit ? 1 : 0,
       requireDrawProbabilities: requiresDrawProbabilityAudit,
       requiredDrawProbabilityCount: requiresDrawProbabilityAudit ? 1 : 0,
+      requireBinomialDistributions: requiresBinomialAudit,
+      requiredBinomialDistributionCount: requiresBinomialAudit ? exerciseCount : 0,
     });
+    if (!requiresBinomialAudit) return verificationResult;
+
+    const binomialChecks = Array.isArray(candidateChecks)
+      ? candidateChecks.filter((check) => check?.type === "binomial_distribution")
+      : [];
+    const planIndexes = binomialChecks.map((check) => check.planIndex);
+    const coversEveryExercise =
+      planIndexes.length === exerciseCount &&
+      new Set(planIndexes).size === exerciseCount &&
+      planIndexes.every((index) => Number.isInteger(index) && index >= 0 && index < exerciseCount);
+    if (coversEveryExercise) return verificationResult;
+
+    return {
+      ...verificationResult,
+      ok: false,
+      results: [
+        ...verificationResult.results,
+        {
+          type: "binomial_distribution",
+          ok: false,
+          reason: `un tableau binomial complet et distinct est requis pour chacun des ${exerciseCount} exercices`,
+        },
+      ],
+    };
   };
 
   // Garde-fou de recalcul programmatique (voir mathCheck.js) : l'étape 1
@@ -726,14 +752,29 @@ ${requiresRationalDecompositionAudit ? `- division euclidienne d'une fonction ra
     .filter((check) => check?.type === "draw_probability")
     .map((check) => `Tirage vérifié (ordonné) : ${check.totalOutcomes} issues, ${check.favorableOutcomes} favorables, probabilité ${check.claimedProbability}. Garde le même dénombrement et le vocabulaire « successivement ».`)
     .join("\n");
+  const binomialChecksBlock = checks
+    .map((check, index) => {
+      if (check?.type !== "binomial_distribution") return "";
+      const result = verification.results[index];
+      if (!Array.isArray(result?.distribution)) return "";
+      const precision = Number.isInteger(check.precision) ? check.precision : 5;
+      const values = result.distribution
+        .map(({ k, computed }) => `P(X=${k})=${Number(computed.toFixed(precision))}`)
+        .join(" ; ");
+      return `Exercice ${check.planIndex + 1}, X~B(${check.n}, ${check.p}), probabilités recalculées et arrondies à ${precision} décimales : ${values}. La somme non arrondie vaut ${result.sumComputed}; la somme arrondie doit rester proche de 1.`;
+    })
+    .filter(Boolean)
+    .join("\n");
 
   const draftPrompt = `${sharedContext}${plansBlock}
 ${variationChecksBlock ? `\n\nRéférences de variations recalculées par le serveur :\n${variationChecksBlock}` : ""}
 ${rationalChecksBlock ? `\n\nRéférences de décomposition recalculées par le serveur :\n${rationalChecksBlock}` : ""}
 ${drawChecksBlock ? `\n\nRéférences de tirage recalculées par le serveur :\n${drawChecksBlock}` : ""}
+${binomialChecksBlock ? `\n\nRéférences binomiales recalculées par le serveur :\n${binomialChecksBlock}` : ""}
 
 Rédige maintenant les ${exerciseCount} exercices complets (énoncé + réponse + explication). Les énoncés, réponses et explications doivent être cohérents entre eux et avec les calculs. Vérifie que chaque réponse découle de l'énoncé et que les étapes de la correction aboutissent au résultat annoncé. Pour les limites, ne qualifie pas de forme indéterminée un produit dont les signes déterminent la limite, par exemple (−∞)×(+∞)=−∞. Relis chaque énoncé pour supprimer les répétitions accidentelles de mots (par exemple « variable aléatoire aléatoire »), les formulations maladroites et les coquilles. Les explications sont destinées à l'élève : donne une solution pédagogique claire et finalisée, sans brouillon, hésitation, tentative abandonnée, commentaire sur tes instructions ou autocorrection. Respecte aussi le cadre indiqué pour chaque exercice : une grandeur réelle non négative ne doit jamais prendre une valeur négative sur le domaine annoncé. Si une situation concrète ne convient pas à la fonction, présente l'exercice de façon abstraite plutôt que de donner une interprétation fausse. Exception : si le cadre est "challenge", l'énoncé doit demander explicitement si le modèle est cohérent et la correction doit démontrer pourquoi il est impossible ; ne présente jamais les valeurs impossibles comme réalistes. Pour toute fraction issue d'un reste négatif, simplifie le signe : écris Q(x)−|R|/D(x), jamais Q(x)+(-|R|)/D(x). Applique cette simplification dans l'énoncé, la réponse et chaque étape d'explication.
 ${requiresVariationAudit ? `Pour tout exercice qui demande un tableau de variations, le champ "answer" DOIT contenir le tableau complet sous forme de tableau Markdown (avec une ligne d'en-tête et des séparateurs |), pas seulement une description en prose. Le tableau indique les bornes du domaine, les points critiques, le signe de f'(x) sur chaque intervalle, le sens de variation de f et les valeurs de f aux points critiques. Écris les formules dans les cellules avec $...$ pour qu'elles soient rendues par KaTeX. Reprends exactement les sens de variation validés dans les références du serveur : une fonction croissante se représente par une flèche ↗, une fonction décroissante par une flèche ↘. Vérifie dans le tableau que chaque flèche correspond au signe de f'(x) et au sens écrit en prose ; ne les inverse pas. Par exemple, si les variations vérifiées sont croissante puis décroissante, la ligne de f doit monter vers le maximum puis redescendre. La prose peut compléter le tableau dans "explanation", mais ne le remplace pas.` : ""}
+${requiresBinomialAudit ? `Dans chaque tableau de loi binomiale, reprends exactement les probabilités calculées par le serveur ci-dessus, pour chaque k de 0 à n. Ne recalcule pas ces valeurs dans la rédaction et n'en omets aucune.` : ""}
 
 Si tu repères une contradiction ou si tu ne peux pas vérifier un résultat, ne l'invente pas et ne la masque pas : réponds uniquement avec {"error":"calcul incohérent"}. L'API indiquera que la génération a échoué et demandera une nouvelle tentative. Pour les calculs qui ne sont pas couverts par les vérifications numériques, sois prudent et n'affirme pas un résultat dont tu n'es pas sûr.
 Réponds en JSON avec le format suivant :

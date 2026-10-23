@@ -265,3 +265,56 @@ test("refuse de mélanger un tirage successif avec des dénombrements non ordonn
   }]);
   assert.equal(result.ok, false);
 });
+
+test("recalcule la loi binomiale B(10, 0,3) et accepte les valeurs arrondies à 5 décimales", () => {
+  const probabilities = Array.from({ length: 11 }, (_, k) => {
+    const combination = Array.from({ length: Math.min(k, 10 - k) }, (_, index) =>
+      (10 - Math.min(k, 10 - k) + index + 1) / (index + 1)
+    ).reduce((product, factor) => product * factor, 1);
+    const computed = combination * 0.3 ** k * 0.7 ** (10 - k);
+    return { k, claimed: Number(computed.toFixed(5)) };
+  });
+  const result = verifyChecks([
+    { type: "binomial_distribution", n: 10, p: 0.3, precision: 5, probabilities },
+  ], { requireBinomialDistributions: true, requiredBinomialDistributionCount: 1 });
+
+  assert.equal(result.ok, true);
+  assert.ok(Math.abs(result.results[0].distribution[4].computed - 0.200120949) < 1e-12);
+  assert.ok(Math.abs(result.results[0].sumComputed - 1) < 1e-12);
+});
+
+test("détecte P(X=4)=0,19996 et le total erroné de la réponse observée", () => {
+  const probabilities = [
+    0.02825, 0.12106, 0.23347, 0.26683, 0.19996, 0.10292,
+    0.03676, 0.00900, 0.00145, 0.00014, 0.00001,
+  ].map((claimed, k) => ({ k, claimed }));
+  const result = verifyChecks([
+    { type: "binomial_distribution", n: 10, p: 0.3, precision: 5, probabilities },
+  ]);
+
+  assert.equal(result.ok, false);
+  assert.ok(Math.abs(result.results[0].distribution[4].computed - 0.200120949) < 1e-12);
+  assert.match(result.results[0].reason, /P\(X=4\).*0\.19996/);
+});
+
+test("exige une loi binomiale complète lorsque le sujet le demande", () => {
+  const missing = verifyChecks([], {
+    requireBinomialDistributions: true,
+    requiredBinomialDistributionCount: 1,
+  });
+  const incomplete = verifyChecks([
+    {
+      type: "binomial_distribution",
+      n: 2,
+      p: 0.5,
+      probabilities: [{ k: 0, claimed: 0.25 }, { k: 2, claimed: 0.25 }],
+    },
+  ], {
+    requireBinomialDistributions: true,
+    requiredBinomialDistributionCount: 1,
+  });
+
+  assert.equal(missing.ok, false);
+  assert.equal(incomplete.ok, false);
+  assert.match(incomplete.results[0].reason, /3 valeurs de k/);
+});

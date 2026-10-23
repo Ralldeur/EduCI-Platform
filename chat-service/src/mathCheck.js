@@ -19,7 +19,8 @@ import { derivative, evaluate } from "mathjs";
 // variations, on contrôle le signe de f' sur plusieurs points de chaque
 // intervalle fourni par l'étape de préparation.
 // NON COUVERT (volontairement, pour rester réalisable en une session) :
-// limites, intégrales, nombres complexes, statistiques/régression, preuves
+// limites, intégrales, nombres complexes, statistiques hors loi binomiale/
+// régression, preuves
 // par récurrence, équations à résoudre, certification du signe de la dérivée
 // sur un intervalle entier, et tout calcul à plusieurs variables. Les
 // contrôles hors de ce périmètre ne sont pas générés — voir verifyPrompt dans
@@ -273,6 +274,78 @@ function checkDrawProbability(check) {
   return { ok, total, favorable, probability, reason: ok ? undefined : "les dénombrements ne respectent pas la convention de tirage annoncée" };
 }
 
+function binomialProbability(n, k, p) {
+  if (p === 0) return k === 0 ? 1 : 0;
+  if (p === 1) return k === n ? 1 : 0;
+
+  // Calcul logarithmique pour éviter le débordement de C(n,k) avant la
+  // multiplication par p^k(1-p)^(n-k), surtout pour les n plus grands.
+  const upper = Math.min(k, n - k);
+  let logCombination = 0;
+  for (let index = 1; index <= upper; index += 1) {
+    logCombination += Math.log(n - upper + index) - Math.log(index);
+  }
+  const logProbability =
+    logCombination + k * Math.log(p) + (n - k) * Math.log1p(-p);
+  return Math.exp(logProbability);
+}
+
+function checkBinomialDistribution(check) {
+  const n = toNumber(check.n);
+  const p = toNumber(check.p);
+  const precision = check.precision == null ? 5 : toNumber(check.precision);
+  if (
+    !Number.isInteger(n) || n < 0 || n > 1000 ||
+    !Number.isFinite(p) || p < 0 || p > 1 ||
+    !Number.isInteger(precision) || precision < 0 || precision > 12
+  ) {
+    return { ok: false, reason: "paramètres binomiaux invalides (n, p ou précision)" };
+  }
+  if (!Array.isArray(check.probabilities) || check.probabilities.length !== n + 1) {
+    return { ok: false, reason: `le tableau doit contenir les ${n + 1} valeurs de k, de 0 à n` };
+  }
+
+  const rowsByK = new Map();
+  for (const row of check.probabilities) {
+    const k = toNumber(row?.k);
+    const claimed = toNumber(row?.claimed);
+    if (
+      !Number.isInteger(k) || k < 0 || k > n ||
+      !Number.isFinite(claimed) || claimed < 0 || claimed > 1 || rowsByK.has(k)
+    ) {
+      return { ok: false, reason: "valeurs k/probabilité manquantes, invalides ou dupliquées" };
+    }
+    rowsByK.set(k, claimed);
+  }
+  if (rowsByK.size !== n + 1) {
+    return { ok: false, reason: `le tableau doit couvrir chaque k de 0 à ${n}` };
+  }
+
+  const tolerance = 0.5 * 10 ** -precision + Number.EPSILON;
+  const distribution = Array.from({ length: n + 1 }, (_, k) => {
+    const computed = binomialProbability(n, k, p);
+    const claimed = rowsByK.get(k);
+    return { k, computed, claimed, ok: Math.abs(computed - claimed) <= tolerance };
+  });
+  const sumClaimed = distribution.reduce((sum, row) => sum + row.claimed, 0);
+  const sumComputed = distribution.reduce((sum, row) => sum + row.computed, 0);
+  const sumTolerance = (n + 1) * tolerance + 1e-12;
+  const failedRow = distribution.find((row) => !row.ok);
+  const sumOk = Math.abs(sumClaimed - 1) <= sumTolerance;
+
+  return {
+    ok: !failedRow && sumOk,
+    distribution,
+    sumClaimed,
+    sumComputed,
+    reason: failedRow
+      ? `P(X=${failedRow.k}) annoncé à ${failedRow.claimed}, valeur recalculée ${failedRow.computed}`
+      : !sumOk
+        ? `la somme du tableau vaut ${sumClaimed}, au lieu de 1 à l'arrondi près`
+        : undefined,
+  };
+}
+
 function checkNonnegativeSamples(check) {
   if (typeof check.expr !== "string" || !check.expr.trim()) {
     return { ok: false, reason: "expression manquante pour l'audit du contexte" };
@@ -329,6 +402,7 @@ const CHECKERS = {
   derivative_signs: checkDerivativeSigns,
   rational_decomposition: checkRationalDecomposition,
   draw_probability: checkDrawProbability,
+  binomial_distribution: checkBinomialDistribution,
   nonnegative_samples: checkNonnegativeSamples,
   context_audit: checkContextAudit,
   invalid_context_audit: checkInvalidContextAudit,
@@ -358,13 +432,16 @@ export function verifyChecks(
     requiredRationalDecompositionCount = 0,
     requireDrawProbabilities = false,
     requiredDrawProbabilityCount = 0,
+    requireBinomialDistributions = false,
+    requiredBinomialDistributionCount = 0,
   } = {}
 ) {
   if (!Array.isArray(checks) || checks.length === 0) {
     return {
       ok: (!requireDerivativeSigns || requiredDerivativeSignCount === 0) &&
         (!requireRationalDecompositions || requiredRationalDecompositionCount === 0) &&
-        (!requireDrawProbabilities || requiredDrawProbabilityCount === 0),
+        (!requireDrawProbabilities || requiredDrawProbabilityCount === 0) &&
+        (!requireBinomialDistributions || requiredBinomialDistributionCount === 0),
       results: [],
     };
   }
@@ -391,6 +468,9 @@ export function verifyChecks(
         requiredRationalDecompositionCount) &&
     (!requireDrawProbabilities ||
       results.filter((r) => r.type === "draw_probability" && !r.skipped && r.ok === true).length >=
-        requiredDrawProbabilityCount);
+        requiredDrawProbabilityCount) &&
+    (!requireBinomialDistributions ||
+      results.filter((r) => r.type === "binomial_distribution" && !r.skipped && r.ok === true).length >=
+        requiredBinomialDistributionCount);
   return { ok, results };
 }
