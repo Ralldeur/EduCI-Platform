@@ -10,3 +10,12 @@ test("distingue les extremums des points d'inflexion et vérifie les croisements
   assert.match(prompt, /ne prouve pas qu'elle ne la coupe jamais/);
   assert.match(prompt, /résolvant l'égalité correspondante/);
 });
+
+test("demande des graphiques et schémas structurés directement dans le chat", () => {
+  const prompt = buildSystemPrompt({ gradeLevel: "TLE", subject: "Physique-Chimie", mode: "EXERCISE" });
+
+  assert.match(prompt, /educi-graph/);
+  assert.match(prompt, /educi-diagram/);
+  assert.match(prompt, /"kind":"arrow"/);
+  assert.match(prompt, /ne lui montre pas directement le graphique-réponse/);
+});

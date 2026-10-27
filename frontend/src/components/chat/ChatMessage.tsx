@@ -1,7 +1,7 @@
 "use client";
 
-import { useRef } from "react";
-import ReactMarkdown from "react-markdown";
+import { Children, isValidElement, useRef, type ReactNode } from "react";
+import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeRaw from "rehype-raw";
@@ -10,7 +10,35 @@ import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import { cn } from "@/lib/utils";
 import { mdSanitizeSchema, normalizeMathContent, useFitKatexDisplays } from "@/lib/markdown";
+import { parseEduVisual } from "@/lib/eduVisual";
+import EduVisual from "@/components/chat/EduVisual";
 import { Sparkles } from "lucide-react";
+
+type CodeBlock = { language: string; source: string };
+
+function getEduCodeBlock(children: ReactNode): CodeBlock | null {
+  const code = Children.toArray(children).find(
+    (child) => isValidElement(child) && child.type === "code"
+  );
+  if (!isValidElement<{ className?: string; children?: ReactNode }>(code)) return null;
+
+  const language = code.props.className?.match(/(?:^|\s)language-(educi-graph|educi-diagram)(?:\s|$)/)?.[1];
+  if (!language) return null;
+
+  const source = Children.toArray(code.props.children)
+    .map((part) => (typeof part === "string" || typeof part === "number" ? String(part) : ""))
+    .join("")
+    .replace(/\n$/, "");
+  return { language, source };
+}
+
+const markdownComponents: Components = {
+  pre({ children }) {
+    const block = getEduCodeBlock(children);
+    const visual = block ? parseEduVisual(block.language, block.source) : null;
+    return visual ? <EduVisual visual={visual} /> : <pre>{children}</pre>;
+  },
+};
 
 interface ChatMessageProps {
   content: string;
@@ -76,6 +104,7 @@ export default function ChatMessage({
           <ReactMarkdown
             remarkPlugins={[remarkGfm, remarkMath]}
             rehypePlugins={[rehypeRaw, [rehypeSanitize, mdSanitizeSchema], rehypeKatex]}
+            components={markdownComponents}
           >
             {normalizeMathContent(content)}
           </ReactMarkdown>

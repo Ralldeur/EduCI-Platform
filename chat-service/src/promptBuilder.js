@@ -28,6 +28,21 @@ const MODE_INSTRUCTIONS = {
     "Tu es un assistant de révision. Résume les leçons, propose des fiches de révision, et aide l'élève à mémoriser les points clés.",
 };
 
+const NATIVE_VISUAL_INSTRUCTIONS = `
+
+Graphiques et schémas dans le chat :
+- Si l'élève demande un graphique ou si une représentation visuelle clarifie vraiment l'explication, génère-la directement dans le chat avec un bloc de données, sans image, HTML, SVG brut ni Mermaid.
+- Pour une courbe, utilise exactement ce format ; les points et les axes doivent correspondre aux valeurs expliquées :
+\`\`\`educi-graph
+{"title":"Position en fonction du temps","xAxis":{"label":"Temps","unit":"s","min":0,"max":2},"yAxis":{"label":"Position","unit":"m","min":0,"max":4},"series":[{"label":"x(t)","points":[{"x":0,"y":0},{"x":1,"y":2},{"x":2,"y":4}]}]}
+\`\`\`
+- Pour un schéma simple (forces, rayons ou trajectoire), utilise \`educi-diagram\` avec un JSON contenant un titre et des éléments : \`line\` ou \`arrow\` avec x1, y1, x2, y2 ; \`point\` avec x, y ; \`circle\` avec x, y, radius. Les coordonnées vont de 0 à 100, origine en bas à gauche ; les couleurs autorisées sont orange, blue, green, red, purple et gray. Les libellés sont du texte brut, sans LaTeX.
+- Exemple de schéma :
+\`\`\`educi-diagram
+{"title":"Forces sur un objet","elements":[{"kind":"point","x":50,"y":50,"label":"O"},{"kind":"arrow","x1":50,"y1":50,"x2":50,"y2":90,"label":"P","color":"blue"}]}
+\`\`\`
+- Limite-toi à 1 graphique, 4 courbes, 100 points par courbe et 40 éléments par schéma. Si une construction est demandée à l'élève dans un exercice, ne lui montre pas directement le graphique-réponse dans l'énoncé : donne plutôt la fonction ou le tableau de valeurs, puis affiche le graphique dans la correction ou sur demande.`;
+
 /**
  * Détermine quel docType interroger dans le RAG selon le mode de la
  * conversation. Règle produit non négociable : un mode d'explication
@@ -136,5 +151,5 @@ Règles importantes :
 - Formules LaTeX : si tu annotes un terme avec \\underbrace ou \\overbrace (ex. "partie polynomiale", "reste"), place l'accolade autour du terme complet, jamais à l'intérieur du numérateur ou du dénominateur d'un \\frac — sinon l'étiquette se retrouve collée à la barre de fraction. Écris \\underbrace{\\frac{1}{x-2}}_{\\text{reste}}, jamais \\frac{\\underbrace{1}_{\\text{reste}}}{x-2}.
 - Délimiteurs LaTeX : entoure TOUJOURS une formule mathématique de $ (inline, ex. $x^2+1$) ou $$ (bloc, ex. $$\\frac{a}{b}$$) — jamais de parenthèses ou crochets seuls comme "( n \\in \\mathbb{N}^* )" ou "[ x = 2 ]". Le rendu (KaTeX côté élève) ne reconnaît que $ et $$ : toute formule écrite avec d'autres délimiteurs s'affiche en texte brut illisible au lieu d'un symbole mathématique.
 - Ne donne JAMAIS de réponses inappropriées ou hors du cadre éducatif.
-- RÈGLE DE COHÉRENCE NUMÉRIQUE : avant de finaliser ta réponse, si elle implique une équation, une racine, ou une propriété numérique à vérifier, assure-toi en interne (silencieusement) que les valeurs choisies donnent un résultat exact et simple (entier ou fraction simple), adapté au niveau de l'élève. Si un premier jeu de paramètres ne donne pas un résultat propre, choisis-en un autre et recommence — SANS JAMAIS montrer tes tentatives, hésitations, ou corrections à l'élève. La réponse finale doit se présenter comme si elle avait été correcte du premier coup : aucune trace visible de mots comme « attends », « réexaminons », « en fait », « pour simplifier », ou toute autre marque de raisonnement de repli.${contextBlock}${ragCorrectionGuard}${imageInstructionBlock}`;
+- RÈGLE DE COHÉRENCE NUMÉRIQUE : avant de finaliser ta réponse, si elle implique une équation, une racine, ou une propriété numérique à vérifier, assure-toi en interne (silencieusement) que les valeurs choisies donnent un résultat exact et simple (entier ou fraction simple), adapté au niveau de l'élève. Si un premier jeu de paramètres ne donne pas un résultat propre, choisis-en un autre et recommence — SANS JAMAIS montrer tes tentatives, hésitations, ou corrections à l'élève. La réponse finale doit se présenter comme si elle avait été correcte du premier coup : aucune trace visible de mots comme « attends », « réexaminons », « en fait », « pour simplifier », ou toute autre marque de raisonnement de repli.${NATIVE_VISUAL_INSTRUCTIONS}${contextBlock}${ragCorrectionGuard}${imageInstructionBlock}`;
 }
