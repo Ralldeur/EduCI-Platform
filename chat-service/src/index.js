@@ -479,6 +479,7 @@ ${curriculumBlock}
 
 Contraintes :
 - Reste STRICTEMENT dans le programme ivoirien ci-dessus pour ce niveau (pas de notions hors-programme).
+- Si le sujet spécifique donne une fonction ou une expression explicite, conserve-la exactement dans les exercices et leurs contrôles numériques. Pour plusieurs exercices sur cette expression, varie les questions posées plutôt que d'inventer d'autres fonctions.
 - Quand une situation concrète est cohérente avec les valeurs et le domaine mathématique, ancre-la en Côte d'Ivoire (FCFA, villes, cacao/café, prénoms locaux). Ne force pas une fonction dans un contexte physique qui rendrait ses valeurs impossibles ; garde alors un exercice mathématique abstrait. N'utilise jamais l'euro ni le dollar.
 - Inspire-toi du format de l'examen national : ${exam.name} (${exam.full}).${ragBlock}`;
 
@@ -510,7 +511,7 @@ Tâche : NE RÉDIGE AUCUN énoncé. Pour chacun des ${exerciseCount} exercices �
 5. Privilégie des résultats exacts et simples (entier ou fraction simple) adaptés au niveau ${gradeLevel}.
 6. Choisis un contexte seulement s'il respecte le domaine et le sens des valeurs. Une récolte, une distance, un âge, une masse ou un effectif ne peut pas être négatif. Pour une grandeur forcément non négative définie à partir d'un instant de départ, vérifie aussi l'expression au départ et aux deux premiers pas après le départ. Pour une variable physique à domaine borné (par ex. l'avancement x d'une réaction, avec 0 ≤ x ≤ xmax), donne les bornes réelles et vérifie seulement dans cet intervalle. Si une valeur est impossible, change le contexte ou garde un exercice abstrait ; ne change pas une formule imposée par le sujet.
 7. Exception pédagogique : si le sujet demande explicitement à l'élève de tester la validité ou la cohérence d'un modèle concret, conserve le contexte comme contre-exemple et fais de l'impossibilité la question à résoudre. Ne présente jamais le modèle impossible comme valide. Dans ce cas, utilise le mode "challenge".
-${requiresVariationAudit ? `8. Le sujet demande une étude de fonction/variations : pour chaque exercice concerné, ajoute un check "derivative_signs" avec l'expression de f et tous les intervalles de monotonie séparés par les points critiques et les valeurs interdites. Utilise from:null pour -∞, to:null pour +∞, et trend:"increasing" ou "decreasing". Exemple : {"type":"derivative_signs","expr":"(x^2+2*x+1)/(x-1)","intervals":[{"from":null,"to":-1,"trend":"increasing"},{"from":-1,"to":1,"trend":"decreasing"},{"from":1,"to":3,"trend":"decreasing"},{"from":3,"to":null,"trend":"increasing"}]}. Le serveur recalculera le signe de f' en plusieurs points de chaque intervalle. Ne fournis pas ce check si tu n'as pas déterminé les intervalles correctement.` : ""}
+${requiresVariationAudit ? `8. Le sujet demande une étude de fonction/variations : pour chaque exercice concerné, ajoute un check "derivative_signs" avec l'expression de f et tous les intervalles de monotonie séparés par les points critiques et les valeurs interdites. Chaque intervalle doit être inclus dans le domaine réel de f : pour ln(g(x)), impose g(x)>0 (par exemple, ln(x)/x est définie sur (0,+∞)) et n'échantillonne jamais en dehors de ce domaine. Utilise from:null pour -∞, to:null pour +∞, et trend:"increasing" ou "decreasing". Exemple : {"type":"derivative_signs","expr":"(x^2+2*x+1)/(x-1)","intervals":[{"from":null,"to":-1,"trend":"increasing"},{"from":-1,"to":1,"trend":"decreasing"},{"from":1,"to":3,"trend":"decreasing"},{"from":3,"to":null,"trend":"increasing"}]}. Le serveur recalculera le signe de f' en plusieurs points de chaque intervalle. Ne fournis pas ce check si tu n'as pas déterminé le domaine et les intervalles correctement.` : ""}
 ${requiresRationalDecompositionAudit ? `9. Pour chaque fonction rationnelle, vérifie aussi la division euclidienne avec un check "rational_decomposition" : {"type":"rational_decomposition","numeratorExpr":"3*x^2-6*x+2","denominatorExpr":"x-1","quotientExpr":"3*x-3","remainderExpr":"-1"}. Le serveur contrôle l'identité N(x)=D(x)Q(x)+R(x) sur plusieurs valeurs. Reprends exactement le quotient et le reste validés dans la correction et déduis-en la position par rapport à l'asymptote.` : ""}
 ${requiresDrawProbabilityAudit ? `10. Pour les tirages sans remise, choisis explicitement la convention ordonnée : l'énoncé doit dire que les objets sont tirés successivement, et le dénombrement compte des séquences ordonnées. Fournis un check "draw_probability" avec red, blue, ordered:true, totalOutcomes, favorableOutcomes et claimedProbability. Pour deux objets de couleurs différentes, favorableOutcomes=2*red*blue et totalOutcomes=(red+blue)*(red+blue-1).` : ""}
 ${requiresBinomialAudit ? `11. Le sujet demande une loi binomiale : pour CHAQUE exercice, fournis un check "binomial_distribution" avec son planIndex (de 0 à ${exerciseCount - 1}), n, p, precision et toutes les probabilités P(X=k) de k=0 à n dans "probabilities" sous la forme [{"k":0,"claimed":0.02825}, ...]. Utilise precision:5 si les valeurs sont affichées à 5 décimales. Le serveur recalculera chaque valeur et la somme du tableau ; reprends uniquement les valeurs recalculées dans l'exercice.` : ""}
@@ -792,6 +793,11 @@ Réponds en JSON avec le format suivant :
 
   const systemPrompt =
     "Tu es un générateur d'exercices pour le programme scolaire ivoirien. Réponds uniquement en JSON valide. Formules LaTeX : entoure TOUJOURS une formule mathématique de $ (inline) ou $$ (bloc) — jamais de parenthèses/crochets seuls comme \"( n \\in \\mathbb{N}^* )\" — sinon elle s'affiche en texte brut au lieu d'un symbole mathématique côté élève.";
+  // Une étude complète avec tableau de variations, ou une loi binomiale
+  // complète, produit plusieurs tableaux détaillés. Le plafond standard de
+  // 6000 tokens tronquait parfois le JSON avant la fin des trois réponses ;
+  // réserver plus de sortie pour ces formats structurés évite un JSON invalide.
+  const draftMaxTokens = requiresVariationAudit || requiresBinomialAudit ? 10000 : 6000;
   let raw;
   let result;
   try {
@@ -808,7 +814,7 @@ Réponds en JSON avec le format suivant :
                 : "\n\nRéécris tous les exercices en réponses finales propres. Supprime tout brouillon, hésitation, autocorrection et toute correction ou rectification entre parenthèses dans les énoncés. Relis chaque réponse pour éviter les contradictions entre le résultat annoncé et les étapes."),
           },
         ],
-        { maxTokens: 6000, reasoningEffort: "none" }
+        { maxTokens: draftMaxTokens, reasoningEffort: "none" }
       );
       result = JSON.parse(raw);
       result.exercises = normalizeExercises(result?.exercises);

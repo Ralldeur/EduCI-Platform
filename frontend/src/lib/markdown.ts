@@ -73,9 +73,30 @@ function forceDisplayFractions(text: string): string {
   return text.replace(/\\frac(?=\{)/g, "\\dfrac");
 }
 
-/** Applique les deux correctifs ci-dessus, dans l'ordre. */
+/**
+ * Les exercices à trous contiennent parfois une puissance LaTeX non délimitée
+ * dans l'énoncé (ex. `1.0 \\times 10^{\\text{______}}`). Sans `$...$`,
+ * remark-math laisse la commande brute dans le texte. N'encadre que cette
+ * forme très précise et ignore les segments math déjà délimités.
+ */
+function normalizeBareBlankPowers(text: string): string {
+  return text
+    .split(/(\${1,2}[\s\S]*?\${1,2})/g)
+    .map((part, index) => {
+      if (index % 2 === 1) return part;
+      return part.replace(
+        /(\d+(?:[.,]\d+)?\s*\\times\s*\d+\s*\^\{\\text\{_+\}\})/g,
+        (_, formula: string) => `$${formula}$`
+      );
+    })
+    .join("");
+}
+
+/** Applique les correctifs de rendu dans l'ordre. */
 export function normalizeMathContent(text: string): string {
-  return forceDisplayFractions(normalizeDisplayMath(text));
+  return forceDisplayFractions(
+    normalizeDisplayMath(normalizeBareBlankPowers(text))
+  );
 }
 
 /**
