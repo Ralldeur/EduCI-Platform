@@ -8,6 +8,7 @@ import { streamAIResponse, generateJSON } from "./groqClient.js";
 import { buildCurriculumContext, getCycle, IVORIAN_EXAMS } from "./curriculum.js";
 import { verifyChecks } from "./mathCheck.js";
 import { formatRationalDecomposition, normalizeCorrection, normalizeExercises } from "./exerciseText.js";
+import { acidBaseTitrationGuidance } from "./exercisePromptRules.js";
 
 const app = express();
 const PORT = process.env.PORT || 8082;
@@ -467,6 +468,7 @@ app.post("/exercises/generate", async (req, res) => {
   const requiresRationalDecompositionAudit = /asymptotes?|fonctions? rationnelles?|decomposition rationnelle/i.test(normalizedTopic);
   const requiresDrawProbabilityAudit = /tirages?.*(?:sans remise|successifs?)|sans remise/i.test(normalizedTopic);
   const requiresBinomialAudit = /loi\s+binomiale|binomiale/i.test(normalizedTopic);
+  const titrationGuidance = acidBaseTitrationGuidance(subject, topic);
 
   const sharedContext = `Génère ${exerciseCount} exercices de ${subject} pour un élève de ${gradeLevel} en Côte d'Ivoire.
 ${topic ? `Sujet spécifique : ${topic}` : ""}
@@ -479,6 +481,7 @@ ${curriculumBlock}
 
 Contraintes :
 - Reste STRICTEMENT dans le programme ivoirien ci-dessus pour ce niveau (pas de notions hors-programme).
+${titrationGuidance ? `- ${titrationGuidance}` : ""}
 - Si le sujet spécifique donne une fonction ou une expression explicite, conserve-la exactement dans les exercices et leurs contrôles numériques. Pour plusieurs exercices sur cette expression, varie les questions posées plutôt que d'inventer d'autres fonctions.
 - Quand une situation concrète est cohérente avec les valeurs et le domaine mathématique, ancre-la en Côte d'Ivoire (FCFA, villes, cacao/café, prénoms locaux). Ne force pas une fonction dans un contexte physique qui rendrait ses valeurs impossibles ; garde alors un exercice mathématique abstrait. N'utilise jamais l'euro ni le dollar.
 - Inspire-toi du format de l'examen national : ${exam.name} (${exam.full}).${ragBlock}`;
